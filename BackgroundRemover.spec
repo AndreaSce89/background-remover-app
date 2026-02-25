@@ -42,7 +42,6 @@ a = Analysis(
         'email',
         'http',
         'html',
-        'xml',
         'ssl',
         'asyncio',
     ],

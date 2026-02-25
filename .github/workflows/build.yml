@@ -25,7 +25,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
-          pip install scipy  # Aggiunto scipy esplicitamente
       
       - name: 🧠 Scarica modello U2Net
         run: |
@@ -33,7 +32,7 @@ jobs:
       
       - name: 🏗️ Crea file EXE
         run: |
-          pyinstaller --clean --onefile --windowed --name "BackgroundRemover" --add-data "utils;utils" --hidden-import "rembg" --hidden-import "rembg.session_factory" --hidden-import "onnxruntime" --hidden-import "PIL" --hidden-import "PyQt5.sip" --hidden-import "scipy" --hidden-import "scipy._lib.array_api_compat" --hidden-import "scipy._lib.array_api_compat.numpy.fft" --hidden-import "pymatting" main.py
+          pyinstaller --clean --onefile --windowed --name "BackgroundRemover" --add-data "utils;utils" --add-data "hooks;hooks" --additional-hooks-dir "hooks" --hidden-import "rembg" --hidden-import "rembg.session_factory" --hidden-import "onnxruntime" --hidden-import "PIL" --hidden-import "PyQt5.sip" --hidden-import "scipy" --hidden-import "pymatting" --hidden-import "pymatting.util" --hidden-import "pymatting.util.boxfilter" --copy-metadata "pymatting" --copy-metadata "rembg" --copy-metadata "scipy" main.py
       
       - name: 🎁 Salva il file
         uses: actions/upload-artifact@v4
@@ -69,7 +68,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r requirements.txt
-          pip install scipy
       
       - name: 🧠 Scarica modello U2Net
         run: |
@@ -77,7 +75,7 @@ jobs:
       
       - name: 🏗️ Crea file per Mac
         run: |
-          pyinstaller --clean --onefile --windowed --name "BackgroundRemover" --add-data "utils:utils" --hidden-import "rembg" --hidden-import "rembg.session_factory" --hidden-import "onnxruntime" --hidden-import "PIL" --hidden-import "PyQt5.sip" --hidden-import "scipy" --hidden-import "scipy._lib.array_api_compat" --hidden-import "scipy._lib.array_api_compat.numpy.fft" --hidden-import "pymatting" main.py
+          pyinstaller --clean --onefile --windowed --name "BackgroundRemover" --add-data "utils:utils" --add-data "hooks:hooks" --additional-hooks-dir "hooks" --hidden-import "rembg" --hidden-import "rembg.session_factory" --hidden-import "onnxruntime" --hidden-import "PIL" --hidden-import "PyQt5.sip" --hidden-import "scipy" --hidden-import "pymatting" --hidden-import "pymatting.util" --hidden-import "pymatting.util.boxfilter" --copy-metadata "pymatting" --copy-metadata "rembg" --copy-metadata "scipy" main.py
       
       - name: 🎁 Salva il file Mac
         uses: actions/upload-artifact@v4

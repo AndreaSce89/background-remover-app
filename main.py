@@ -662,8 +662,8 @@ class MainWindow(QMainWindow):
     # =================================================================
     # ELABORAZIONE
     # =================================================================
-    def start_processing(self):
-        """Avvia elaborazione"""
+        def start_processing(self):
+        """Avvia elaborazione - VERSIONE CORRETTA PER PATH COMPLESSI"""
         if not self.files_list:
             self.show_warning("Nessun file", "Carica almeno un'immagine!")
             return
@@ -674,41 +674,79 @@ class MainWindow(QMainWindow):
             self.auto_output()
             output = self.out_edit.text()
         
-        # FIX CRITICO: Prepara cartella output con path assoluto normalizzato
+        # =================================================================
+        # FIX CRITICO: Gestione path con spazi, punti, caratteri speciali
+        # =================================================================
         try:
-            # Converte in path assoluto e normalizza
+            # Rimuovi eventuali virgolette extra
+            output = output.strip('"').strip("'")
+            
+            # Converte in path assoluto e normalizza SEPARATORI
             output = os.path.abspath(output)
             output = os.path.normpath(output)
             
-            logger.info(f"Preparazione output: {output}")
+            # FIX: Gestisci path con spazi usando raw string equivalent
+            # Su Windows, assicurati che sia un path valido
+            if sys.platform == 'win32':
+                # Rimuovi eventuali doppi backslash
+                output = output.replace('\\\\', '\\')
+                # Assicurati non finisca con backslash (causa problemi rari)
+                output = output.rstrip('\\')
             
-            # Crea cartella con exist_ok
-            os.makedirs(output, exist_ok=True)
+            logger.info(f"Preparazione output: '{output}'")
             
-            # Verifica esistenza
+            # Verifica path esiste e crea se necessario
+            # Usa os.makedirs con exist_ok e gestione errori specifica
+            try:
+                os.makedirs(output, exist_ok=True)
+            except OSError as e:
+                # Se fallisce, prova con percorso alternativo (Desktop)
+                if e.winerror == 123:  # ERROR_INVALID_NAME
+                    desktop = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
+                    os.makedirs(desktop, exist_ok=True)
+                    output = desktop
+                    logger.warning(f"Path invalido, uso Desktop: {output}")
+            
+            # Verifica effettiva esistenza
             if not os.path.exists(output):
-                raise RuntimeError(f"os.makedirs non ha creato la cartella: {output}")
+                raise RuntimeError(f"makedirs fallito per: {output}")
             
-            # Verifica scrivibilità
-            test_file = os.path.join(output, ".write_test")
-            with open(test_file, 'w') as f:
-                f.write("test")
-            os.remove(test_file)
+            # Test scrittura con path quotato correttamente
+            test_file = os.path.join(output, "write_test.tmp")
+            try:
+                with open(test_file, 'w', encoding='utf-8') as f:
+                    f.write("test")
+                os.remove(test_file)
+            except PermissionError:
+                # Prova cartella utente se permessi negati
+                user_output = os.path.join(os.path.expanduser("~"), "Documents", "BG_Remover_Output")
+                os.makedirs(user_output, exist_ok=True)
+                output = user_output
+                logger.warning(f"Permessi negati, uso Documents: {output}")
             
-            logger.success(f"Cartella output verificata: {output}")
+            logger.success(f"Output verificato: {output}")
             
         except Exception as e:
             logger.error("Errore preparazione output", e)
-            self.show_error(
-                "Errore cartella output",
-                f"Impossibile preparare la cartella:\n\n{output}\n\n"
-                f"Errore: {str(e)}\n\n"
-                f"Prova a:\n"
-                f"1. Scegliere un'altra cartella (Sfoglia...)\n"
-                f"2. Verificare i permessi di scrittura\n"
-                f"3. Usare il Desktop o Documenti"
-            )
-            return
+            
+            # Fallback ultima risorsa: Desktop
+            try:
+                fallback = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
+                os.makedirs(fallback, exist_ok=True)
+                output = fallback
+                logger.warning(f"Fallback su Desktop: {output}")
+            except Exception as fallback_e:
+                self.show_error(
+                    "Errore cartella output",
+                    f"Impossibile creare cartella output.\n\n"
+                    f"Path tentato: {output}\n"
+                    f"Errore: {str(e)}\n\n"
+                    f"Prova a:\n"
+                    f"1. Scegliere Desktop come output\n"
+                    f"2. Verificare permessi cartella\n"
+                    f"3. Rimuovere caratteri speciali dal path"
+                )
+                return
         
         # Salva path finale
         self.out_edit.setText(output)
@@ -902,3 +940,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

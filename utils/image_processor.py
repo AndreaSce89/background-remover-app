@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Image Processor - Versione stabile con fallback
+Image Processor - Versione con verifica completa
 """
 
 import os
@@ -12,104 +12,130 @@ from pathlib import Path
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-# Fix per PyInstaller
-if getattr(sys, 'frozen', False):
-    # Siamo in un exe
-    bundle_dir = sys._MEIPASS
-else:
-    bundle_dir = os.path.dirname(os.path.abspath(__file__))
-
-# Aggiungi al path se necessario
-if bundle_dir not in sys.path:
-    sys.path.insert(0, bundle_dir)
-
 from PIL import Image
 
 
-def get_u2net_path():
-    """Trova il modello U2Net in vari percorsi"""
-    possible = [
-        os.path.join(bundle_dir, "u2net.onnx"),
-        os.path.join(bundle_dir, ".u2net", "u2net.onnx"),
-        os.path.join(os.path.expanduser("~"), ".u2net", "u2net.onnx"),
-        os.path.join(os.path.dirname(bundle_dir), "u2net.onnx"),
+def find_model():
+    """Trova modello u2net in vari percorsi"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller
+        base = Path(sys._MEIPASS)
+    else:
+        # Normale
+        base = Path(__file__).parent.parent
+    
+    paths = [
+        base / "u2net.onnx",
+        base / ".u2net" / "u2net.onnx",
+        Path.home() / ".u2net" / "u2net.onnx",
+        Path(os.getcwd()) / "u2net.onnx",
     ]
     
-    for p in possible:
-        if os.path.exists(p):
-            return p
+    for p in paths:
+        if p.exists():
+            print(f"Modello trovato: {p}")
+            return str(p)
+    
+    print("Modello NON trovato, verrà scaricato automaticamente")
     return None
 
 
 class BackgroundRemover:
-    """Rimozione sfondo con U2Net"""
-    
-    _session = None
-    
     def __init__(self, model="u2net"):
-        if BackgroundRemover._session is None:
-            self._init_session(model)
-        self.session = BackgroundRemover._session
-    
-    def _init_session(self, model):
-        """Inizializza la sessione ONNX"""
-        try:
-            from rembg.session_factory import new_session
-            
-            # Trova modello locale
-            model_path = get_u2net_path()
-            
-            if model_path:
-                # Usa modello locale
-                model_dir = os.path.dirname(model_path)
-                os.environ['U2NET_HOME'] = model_dir
-                
-            BackgroundRemover._session = new_session(model)
-            
-        except Exception as e:
-            print(f"Errore inizializzazione sessione: {e}")
-            raise
+        from rembg.session_factory import new_session
+        
+        model_path = find_model()
+        
+        if model_path:
+            # Usa modello locale
+            model_dir = os.path.dirname(model_path)
+            os.environ['U2NET_HOME'] = model_dir
+            print(f"U2NET_HOME = {model_dir}")
+        
+        print("Creazione sessione...")
+        self.session = new_session(model)
+        print("Sessione creata!")
     
     def remove_background(self, input_path, output_path, quality=95):
-        """Rimuove sfondo da immagine"""
+        from rembg import remove
+        
         try:
-            from rembg import remove
-            
-            # Verifiche
+            # Verifica input
             if not os.path.exists(input_path):
-                print(f"File non trovato: {input_path}")
+                print(f"ERRORE: Input non esiste: {input_path}")
                 return False
             
-            # Crea cartella output se necessario
+            print(f"Elaborazione: {input_path}")
+            
+            # Crea cartella output
             out_dir = os.path.dirname(output_path)
             if out_dir and not os.path.exists(out_dir):
-                os.makedirs(out_dir, exist_ok=True)
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                    print(f"Creata cartella: {out_dir}")
+                except Exception as e:
+                    print(f"ERRORE creazione cartella: {e}")
+                    return False
             
             # Carica immagine
-            img = Image.open(input_path)
+            try:
+                img = Image.open(input_path)
+                print(f"Immagine: {img.size}, mode: {img.mode}")
+            except Exception as e:
+                print(f"ERRORE apertura immagine: {e}")
+                return False
             
-            # Converti in RGB se necessario
+            # Converti
             if img.mode in ('RGBA', 'P', 'LA', 'L'):
                 img = img.convert('RGB')
+                print("Convertita in RGB")
             
             # Rimuovi sfondo
-            output = remove(img, session=self.session)
+            try:
+                print("Rimozione sfondo...")
+                out = remove(img, session=self.session)
+                print("Sfondo rimosso")
+            except Exception as e:
+                print(f"ERRORE rimozione sfondo: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
             
-            # Assicura RGBA
-            if output.mode != 'RGBA':
-                output = output.convert('RGBA')
+            # Converti in RGBA
+            if out.mode != 'RGBA':
+                out = out.convert('RGBA')
+                print("Convertita in RGBA")
             
-            # Riduci se richiesto
+            # Riduci qualità
             if quality < 100:
-                w, h = output.size
+                w, h = out.size
                 new_w = int(w * quality / 100)
                 new_h = int(h * quality / 100)
-                output = output.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                out = out.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                print(f"Ridimensionata a {new_w}x{new_h}")
             
             # Salva
-            output.save(output_path, 'PNG', optimize=True)
-            return True
+            try:
+                print(f"Salvataggio in: {output_path}")
+                out.save(output_path, 'PNG', optimize=True)
+                
+                # Verifica salvataggio
+                if os.path.exists(output_path):
+                    size = os.path.getsize(output_path)
+                    print(f"Salvato! Dimensione: {size} bytes")
+                    return True
+                else:
+                    print("ERRORE: File non creato dopo save()")
+                    return False
+                    
+            except Exception as e:
+                print(f"ERRORE salvataggio: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
             
         except Exception as e:
-            print(f"Errore elaborazione: {e}")
+            print(f"ERRORE GENERALE: {e}")
+            import traceback
+            traceback.print_exc()
             return False

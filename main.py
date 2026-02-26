@@ -618,73 +618,107 @@ class MainWindow(QMainWindow):
             self.auto_output()
             output = self.out_edit.text()
         
+    # =================================================================
+    # ELABORAZIONE - FIX RICONOSCIMENTO CARTELLA ESISTENTE
+    # =================================================================
+    def start_processing(self):
+        """Avvia elaborazione - RICONOSCE CARTELLE ESISTENTI CON SPAZI/PUNTI"""
+        if not self.files_list:
+            self.show_warning("Nessun file", "Carica almeno un'immagine!")
+            return
+        
+        # Prendi percorso scelto
+        output = self.out_edit.text().strip()
+        if not output:
+            self.auto_output()
+            output = self.out_edit.text()
+        
         # =================================================================
-        # RISPETTA IL PERCORSO DELL'UTENTE - NIENTE FALLBACK AUTOMATICO
+        # FIX: Riconoscimento cartella esistente con path Windows nativo
         # =================================================================
         try:
-            # Pulisci solo virgolette extra
-            output = output.strip('"').strip("'")
+            # 1. Pulisci input
+            output = output.strip('"').strip("'").strip()
             
-            # Normalizza ma MANTENI il percorso scelto
-            output = os.path.abspath(output)
-            output = os.path.normpath(output)
+            # 2. Usa pathlib.Path per gestione robusta path Windows
+            from pathlib import Path
+            output_path = Path(output)
             
-            # Su Windows: fix separatori ma NON cambiare path
-            if sys.platform == 'win32':
-                output = output.replace('\\\\', '\\')
+            # 3. Converti in path assoluto
+            output_path = output_path.resolve()
             
-            logger.info(f"Output richiesto: '{output}'")
-            
-            # Crea cartella SOLO se non esiste
-            if not os.path.exists(output):
-                try:
-                    os.makedirs(output, exist_ok=True)
-                    logger.info(f"Cartella creata: {output}")
-                except OSError as e:
-                    # Se proprio non riesce a creare, mostra errore ma NON cambiare path
-                    self.show_error(
-                        "Errore creazione cartella",
-                        f"Impossibile creare la cartella:\n\n{output}\n\n"
-                        f"Errore: {str(e)}\n\n"
-                        f"Verifica che:\n"
-                        f"1. Il percorso sia corretto\n"
-                        f"2. Tu abbia permessi di scrittura\n"
-                        f"3. Non ci siano caratteri speciali non validi"
-                    )
-                    return
-            
-            # Verifica sia una cartella (non un file)
-            if os.path.exists(output) and not os.path.isdir(output):
-                self.show_error(
-                    "Errore percorso",
-                    f"Il percorso esiste ma non è una cartella:\n{output}"
-                )
-                return
-            
-            # Test scrittura
+            # 4. Verifica esistenza con metodo Windows nativo
+            # Usa os.scandir che è più affidabile di os.path.exists per path complessi
             try:
-                test_file = os.path.join(output, "test_write.tmp")
+                # Tenta di listare la cartella - se funziona, esiste ed è accessibile
+                next(os.scandir(str(output_path)), None)
+                exists = True
+            except (FileNotFoundError, NotADirectoryError, PermissionError):
+                exists = False
+            
+            # 5. Se non esiste, creala
+            if not exists:
+                logger.info(f"Cartella non trovata, tentativo creazione: {output_path}")
+                try:
+                    output_path.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    logger.error(f"mkdir fallito: {e}")
+                    # Fallback: prova con os.makedirs
+                    os.makedirs(str(output_path), exist_ok=True)
+                
+                # Verifica creazione
+                try:
+                    next(os.scandir(str(output_path)), None)
+                except Exception as e:
+                    raise RuntimeError(f"Impossibile creare o accedere a: {output_path}")
+            
+            # 6. Converti a stringa per uso nel programma
+            output = str(output_path)
+            
+            # 7. Verifica sia directory (non file)
+            if os.path.isfile(output):
+                raise RuntimeError(f"Il percorso è un file, non una cartella: {output}")
+            
+            # 8. Test scrittura
+            test_file = os.path.join(output, "test_write.tmp")
+            try:
                 with open(test_file, 'w') as f:
                     f.write("test")
                 os.remove(test_file)
-                logger.success(f"Cartella verificata: {output}")
-            except PermissionError as e:
-                self.show_error(
-                    "Permessi negati",
-                    f"Non hai permessi di scrittura in:\n{output}\n\n"
-                    f"Scegli un'altra cartella (es. Desktop o Documenti)"
-                )
-                return
+                logger.success(f"Cartella verificata e scrivibile: {output}")
+            except Exception as e:
+                raise PermissionError(f"Cartella trovata ma non scrivibile: {output} - {e}")
             
         except Exception as e:
-            logger.error("Errore preparazione output", e)
-            self.show_error(
-                "Errore cartella",
-                f"Errore imprevisto:\n{str(e)}"
-            )
-            return
+            logger.error("Errore verifica cartella", e)
+            
+            # Se l'utente ha scelto un percorso specifico che non funziona, mostra errore
+            if self.out_edit.text().strip():
+                self.show_error(
+                    "Errore cartella output",
+                    f"Impossibile accedere alla cartella:\n\n"
+                    f"{output}\n\n"
+                    f"Errore: {str(e)}\n\n"
+                    f"Prova queste soluzioni:\n"
+                    f"1. Usa 'Sfoglia' per riselezionare la stessa cartella\n"
+                    f"2. Scegli una cartella sul Desktop (sempre funziona)\n"
+                    f"3. Rimuovi spazi dal nome: 'Esito_test' invece di 'Esito test'\n"
+                    f"4. Rimuovi punti: 'Esito_test' invece di 'Esito.test'"
+                )
+                return
+            else:
+                # Fallback su Desktop solo se non ha scelto nulla
+                try:
+                    desktop = Path.home() / "Desktop" / "BG_Remover_Output"
+                    desktop.mkdir(parents=True, exist_ok=True)
+                    output = str(desktop)
+                    self.out_edit.setText(output)
+                    logger.warning(f"Fallback Desktop: {output}")
+                except Exception as fallback_e:
+                    self.show_error("Errore", f"Fallback fallito: {fallback_e}")
+                    return
         
-        # Salva il percorso FINALE (quello scelto dall'utente, mai cambiato)
+        # Salva percorso finale
         self.out_edit.setText(output)
         
         # UI elaborazione
@@ -697,7 +731,7 @@ class MainWindow(QMainWindow):
         self.log("=" * 50)
         self.log("🚀 AVVIO ELABORAZIONE")
         self.log(f"📊 File: {len(self.files_list)}")
-        self.log(f"💾 Output: {output}")  # Questo è il percorso SCELTO, non cambiato
+        self.log(f"💾 Output: {output}")
         self.log("=" * 50)
         
         # Ferma worker precedente
@@ -705,10 +739,10 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.worker.wait(1000)
         
-        # Crea worker con il percorso CORRETTO
+        # Crea worker
         self.worker = WorkerThread(
             self.files_list.copy(),
-            output,  # PERCORSO SCELTO DALL'UTENTE, mai modificato
+            output,
             self.qual_spin.value()
         )
         
@@ -834,3 +868,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

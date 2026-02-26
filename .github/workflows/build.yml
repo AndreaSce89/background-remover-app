@@ -20,33 +20,30 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: 📦 Install dependencies
+      - name: 📦 Install ALL dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller pillow numpy
-          pip install rembg==2.0.52 onnxruntime==1.16.3
+          pip install pyinstaller
+          pip install PyQt5==5.15.10
+          pip install Pillow==10.1.0
+          pip install rembg==2.0.52
+          pip install onnxruntime==1.16.3
+          pip install numpy==1.24.3
+          pip install scipy==1.11.4
+          pip install pymatting==1.1.12
+          pip install scikit-image==0.22.0
+          pip install imageio==2.31.1
+          pip install tqdm==4.66.1
       
       - name: 🧠 Download U2Net model
         run: |
           python -c "from rembg import new_session; s = new_session('u2net')"
-          # Copia modello nella cartella del progetto
           copy %USERPROFILE%\.u2net\u2net.onnx . /Y
         shell: cmd
       
-      - name: 🏗️ Build EXE
+      - name: 🏗️ Build EXE with SPEC
         run: |
-          pyinstaller --clean --onefile --windowed ^
-            --name "BackgroundRemover" ^
-            --add-data "utils;utils" ^
-            --add-data "u2net.onnx;." ^
-            --hidden-import "rembg" ^
-            --hidden-import "rembg.session_factory" ^
-            --hidden-import "onnxruntime" ^
-            --hidden-import "PIL" ^
-            --hidden-import "PIL.Image" ^
-            --hidden-import "numpy" ^
-            main.py
-        shell: cmd
+          pyinstaller BackgroundRemover.spec
       
       - name: 🎁 Upload artifact
         uses: actions/upload-artifact@v4

@@ -48,10 +48,11 @@ class ProcessingThread(QThread):
         error_count = 0
         
         try:
-            self.log_message.emit("🧠 Caricamento AI...")
+            self.log_message.emit("🧠 Caricamento AI (primo avvio lento)...")
             self.remover = BackgroundRemover()
+            self.log_message.emit("✅ AI pronta!")
         except Exception as e:
-            self.log_message.emit(f"❌ Errore AI: {str(e)}")
+            self.log_message.emit(f"❌ Errore AI: {str(e)[:50]}")
             self.processing_finished.emit(0, total)
             return
         
@@ -467,3 +468,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

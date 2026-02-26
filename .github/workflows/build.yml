@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest  # Torna a windows-latest, più disponibile
+    runs-on: windows-latest
     
     steps:
     - uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller==6.3.0
+        pip install pyinstaller
         pip install -r requirements.txt
     
     - name: Download model
@@ -31,7 +31,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir
           Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" -OutFile $file
         }
-        Write-Host "Modello:" (Get-Item $file).Length "bytes"
+        Write-Host "Modello pronto:" (Get-Item $file).Length "bytes"
     
     - name: Build EXE
       run: |

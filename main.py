@@ -6,6 +6,7 @@ Background Remover App - Versione Stabile e Veloce
 
 import sys
 import os
+import traceback
 from pathlib import Path
 from datetime import datetime
 
@@ -18,9 +19,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
 from PyQt5.QtGui import QFont
-
-# Import posticipato per velocità
-# from utils.image_processor import BackgroundRemover
 
 
 class ProcessingThread(QThread):
@@ -52,7 +50,10 @@ class ProcessingThread(QThread):
             self.remover = BackgroundRemover()
             self.log_message.emit("✅ AI pronta!")
         except Exception as e:
-            self.log_message.emit(f"❌ Errore AI: {str(e)[:50]}")
+            err_msg = str(e)
+            self.log_message.emit(f"❌ Errore AI: {err_msg[:50]}")
+            print(f"ERRORE AI DETTAGLIATO: {err_msg}")
+            traceback.print_exc()
             self.processing_finished.emit(0, total)
             return
         
@@ -88,12 +89,16 @@ class ProcessingThread(QThread):
                 else:
                     error_count += 1
                     self.file_processed.emit(filename, False, "Err")
-                    self.log_message.emit(f"❌ Errore")
+                    self.log_message.emit(f"❌ Errore elaborazione")
                     
             except Exception as e:
                 error_count += 1
+                err_msg = str(e)
                 self.file_processed.emit(filename, False, "Err")
-                self.log_message.emit(f"❌ {str(e)[:20]}")
+                self.log_message.emit(f"❌ Errore: {err_msg[:40]}")
+                # Stampa dettagli su console per debug
+                print(f"ERRORE su {filename}:")
+                traceback.print_exc()
         
         self.log_message.emit("-" * 25)
         self.log_message.emit(f"🏁 OK:{success_count} Err:{error_count}")
@@ -253,10 +258,10 @@ class MainWindow(QMainWindow):
         box_log = QGroupBox("📝 Log")
         v_log = QVBoxLayout(box_log)
         
-        # QPlainTextEdit invece di QTextEdit per setMaximumBlockCount
+        # QPlainTextEdit per setMaximumBlockCount
         self.log_txt = QPlainTextEdit()
         self.log_txt.setReadOnly(True)
-        self.log_txt.setMaximumBlockCount(100)  # Ora funziona!
+        self.log_txt.setMaximumBlockCount(100)
         v_log.addWidget(self.log_txt)
         
         bot_l.addWidget(box_log)
@@ -398,6 +403,8 @@ class MainWindow(QMainWindow):
             self.thread.file_processed.connect(self.on_file_done)
             self.thread.processing_finished.connect(self.on_finish)
             self.thread.log_message.connect(self.add_log)
+            # NUOVO: connessione per debug thread
+            self.thread.finished.connect(self.on_thread_finished)
             
             self.thread.start()
             
@@ -425,6 +432,10 @@ class MainWindow(QMainWindow):
         
         QMessageBox.information(self, "Finito", f"✅ OK: {ok}\n❌ Err: {err}")
         self.status.showMessage(f"🏁 OK:{ok} Err:{err}")
+        
+    def on_thread_finished(self):
+        """NUOVO: Debug quando thread finisce"""
+        print("Thread terminato correttamente")
         
     def add_log(self, msg):
         t = datetime.now().strftime("%H:%M:%S")
@@ -468,4 +479,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

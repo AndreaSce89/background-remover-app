@@ -66,12 +66,21 @@ if not model_found:
 
 # Hidden imports massivi
 hiddenimports = [
-    # PyQt5
     'PyQt5',
     'PyQt5.sip',
-    'PyQt5.QtCore',
-    'PyQt5.QtGui',
-    'PyQt5.QtWidgets',
+    'rembg',
+    'rembg.session_factory',
+    'onnxruntime',
+    'PIL',
+    'PIL.Image',
+    'numpy',
+    'numpy.core._dtype_ctypes',
+    'scipy',
+    'pymatting',
+    'imageio',
+    'skimage',
+    'tqdm',
+]
     
     # rembg
     'rembg',
@@ -85,15 +94,6 @@ hiddenimports = [
     'onnxruntime.capi.onnxruntime_pybind11_state',
     'onnxruntime.capi._pybind_state',
     'onnxruntime.capi.onnxruntime_validation',
-    
-    # Providers ONNX
-    'onnxruntime.providers',
-    'onnxruntime.providers.cpu',
-    'onnxruntime.providers.cuda',
-    'onnxruntime.providers.coreml',
-    'onnxruntime.providers.directml',
-    'onnxruntime.providers.tvm',
-    'onnxruntime.providers.nnapi',
     
     # PIL
     'PIL',

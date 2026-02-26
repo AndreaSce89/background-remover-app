@@ -1,161 +1,216 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Image Processor - Versione Debug Completo
+Image Processor - Versione Ultra-Robusta
+Gestisce errori onnxruntime e rembg con fallback
 """
 
 import os
 import sys
 import warnings
 import traceback
+import io
+import subprocess
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['ONNXRUNTIME_DISABLE_COREML'] = '1'  # Evita problemi CoreML su Windows
 
-# Fix per PyInstaller
+# Fix path PyInstaller
 if getattr(sys, 'frozen', False):
     bundle_dir = sys._MEIPASS
 else:
-    bundle_dir = os.path.dirname(os.path.abspath(__file__))
+    bundle_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Aggiungi al path
 if bundle_dir not in sys.path:
     sys.path.insert(0, bundle_dir)
 
-from PIL import Image
+
+def debug(msg):
+    """Debug su stderr"""
+    print(f"[IMGPROC] {msg}", file=sys.stderr, flush=True)
 
 
-def debug_print(msg):
-    """Stampa debug su stderr (visibile in console)"""
-    print(f"[DEBUG] {msg}", file=sys.stderr, flush=True)
-
-
-def find_model():
-    """Trova modello u2net"""
-    debug_print(f"Cerco modello in: {bundle_dir}")
+def ensure_model():
+    """Scarica modello se mancante"""
+    model_dir = os.path.join(os.path.expanduser("~"), ".u2net")
+    model_path = os.path.join(model_dir, "u2net.onnx")
     
-    paths = [
-        os.path.join(bundle_dir, "u2net.onnx"),
-        os.path.join(bundle_dir, ".u2net", "u2net.onnx"),
-        os.path.join(os.path.expanduser("~"), ".u2net", "u2net.onnx"),
-    ]
+    if os.path.exists(model_path):
+        debug(f"Modello trovato: {model_path}")
+        return model_path
     
-    for p in paths:
-        debug_print(f"  Controllo: {p} -> {'ESISTE' if os.path.exists(p) else 'NO'}")
-        if os.path.exists(p):
-            return p
+    debug("Modello non trovato, tentativo download...")
+    os.makedirs(model_dir, exist_ok=True)
     
-    return None
+    # URL ufficiale
+    url = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
+    
+    try:
+        import urllib.request
+        debug(f"Download da {url}...")
+        urllib.request.urlretrieve(url, model_path)
+        debug(f"Download completato: {model_path}")
+        return model_path
+    except Exception as e:
+        debug(f"Download fallito: {e}")
+        return None
 
 
 class BackgroundRemover:
     def __init__(self, model="u2net"):
-        debug_print("Inizializzazione BackgroundRemover...")
+        debug("Inizializzazione BackgroundRemover...")
         
-        # Import qui per catturare errori
+        self.session = None
+        self.fallback_mode = False
+        
+        # Prova import rembg
         try:
+            import rembg
             from rembg.session_factory import new_session
-            debug_print("Import new_session OK")
+            debug(f"rembg versione: {rembg.__version__ if hasattr(rembg, '__version__') else 'unknown'}")
         except Exception as e:
-            debug_print(f"ERRORE IMPORT: {e}")
-            raise
+            debug(f"ERRORE import rembg: {e}")
+            raise ImportError(f"rembg non disponibile: {e}")
         
-        model_path = find_model()
+        # Verifica/Scarica modello
+        model_path = ensure_model()
         
-        if model_path:
-            model_dir = os.path.dirname(model_path)
-            os.environ['U2NET_HOME'] = model_dir
-            debug_print(f"U2NET_HOME = {model_dir}")
-        else:
-            debug_print("Modello non trovato, verrà scaricato")
+        # Prova creazione sessione con gestione errori dettagliata
+        errors = []
         
+        # Tentativo 1: Sessione normale
         try:
-            debug_print("Creazione sessione...")
+            debug("Tentativo 1: new_session standard...")
             self.session = new_session(model)
-            debug_print("Sessione creata con successo!")
+            debug("Sessione creata con successo!")
+            return
         except Exception as e:
-            debug_print(f"ERRORE SESSIONE: {e}")
-            traceback.print_exc()
-            raise
+            errors.append(f"Standard: {e}")
+            debug(f"Fallito tentativo 1: {e}")
+        
+        # Tentativo 2: Forza CPU
+        try:
+            debug("Tentativo 2: forzando CPU...")
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            import onnxruntime as ort
+            ort.set_default_logger_severity(3)
+            self.session = new_session(model)
+            debug("Sessione CPU creata!")
+            return
+        except Exception as e:
+            errors.append(f"CPU: {e}")
+            debug(f"Fallito tentativo 2: {e}")
+        
+        # Tentativo 3: Fallback a subprocess
+        debug("Tentativo 3: Modalità subprocess fallback...")
+        self.fallback_mode = True
+        self.model_name = model
+        debug("Fallback mode attivato - userà rembg CLI")
     
     def remove_background(self, input_path, output_path, quality=95):
-        try:
-            from rembg import remove
-        except Exception as e:
-            debug_print(f"ERRORE IMPORT remove: {e}")
-            return False
+        debug(f"{'='*50}")
+        debug(f"Input: {input_path}")
+        debug(f"Output: {output_path}")
         
-        debug_print(f"=" * 50)
-        debug_print(f"Input:  {input_path}")
-        debug_print(f"Output: {output_path}")
-        debug_print(f"Quality: {quality}")
-        
-        # Verifica input
         if not os.path.exists(input_path):
-            debug_print(f"ERRORE: Input non esiste!")
+            debug(f"ERRORE: File input non esiste!")
             return False
         
-        # Crea cartella
+        # Crea cartella output
         out_dir = os.path.dirname(output_path)
-        if out_dir and not os.path.exists(out_dir):
-            try:
-                os.makedirs(out_dir, exist_ok=True)
-                debug_print(f"Creata cartella: {out_dir}")
-            except Exception as e:
-                debug_print(f"ERRORE cartella: {e}")
-                return False
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         
-        # Carica immagine
+        # Modalità fallback (subprocess)
+        if self.fallback_mode:
+            return self._remove_fallback(input_path, output_path)
+        
+        # Modalità normale
         try:
+            from PIL import Image
+            from rembg import remove
+            
+            # Carica
+            debug("Apertura immagine...")
             img = Image.open(input_path)
-            debug_print(f"Immagine caricata: {img.size}, mode={img.mode}")
-        except Exception as e:
-            debug_print(f"ERRORE apertura: {e}")
-            return False
-        
-        # Converti
-        if img.mode in ('RGBA', 'P', 'LA', 'L'):
-            img = img.convert('RGB')
-            debug_print("Convertita in RGB")
-        
-        # RIMUOVI SFONDO - QUI IL PROBLEMA
-        try:
-            debug_print("Chiamata remove()...")
-            out = remove(img, session=self.session)
-            debug_print(f"remove() completata, output size: {out.size}")
-        except Exception as e:
-            debug_print(f"ERRORE remove(): {e}")
-            debug_print("Traceback:")
-            traceback.print_exc()
-            return False
-        
-        # Converti RGBA
-        if out.mode != 'RGBA':
-            out = out.convert('RGBA')
-            debug_print("Convertita in RGBA")
-        
-        # Resize
-        if quality < 100:
-            w, h = out.size
-            new_w = int(w * quality / 100)
-            new_h = int(h * quality / 100)
-            out = out.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            debug_print(f"Ridimensionata a {new_w}x{new_h}")
-        
-        # Salva
-        try:
-            debug_print(f"Salvataggio in {output_path}...")
-            out.save(output_path, 'PNG', optimize=True)
+            debug(f"Dimensioni: {img.size}, Mode: {img.mode}")
+            
+            # Converti se necessario
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+            
+            # Rimuovi sfondo
+            debug("Rimozione sfondo...")
+            output = remove(img, session=self.session)
+            debug(f"Output size: {output.size}")
+            
+            # Ridimensiona se necessario
+            if quality < 100:
+                w, h = output.size
+                new_w = int(w * quality / 100)
+                new_h = int(h * quality / 100)
+                output = output.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                debug(f"Ridimensionata a: {new_w}x{new_h}")
+            
+            # Salva
+            debug(f"Salvataggio in {output_path}...")
+            output.save(output_path, 'PNG')
             
             if os.path.exists(output_path):
                 size = os.path.getsize(output_path)
-                debug_print(f"SUCCESSO! File creato: {size} bytes")
+                debug(f"SUCCESSO! File: {size} bytes")
                 return True
             else:
-                debug_print("ERRORE: File non esiste dopo save()")
+                debug("ERRORE: File non creato!")
                 return False
                 
         except Exception as e:
-            debug_print(f"ERRORE salvataggio: {e}")
-            traceback.print_exc()
+            debug(f"ERRORE processing: {e}")
+            debug(traceback.format_exc())
+            
+            # Se fallisce, prova fallback
+            if not self.fallback_mode:
+                debug("Tentativo fallback...")
+                return self._remove_fallback(input_path, output_path)
+            return False
+    
+    def _remove_fallback(self, input_path, output_path):
+        """Fallback usando rembg come subprocess"""
+        debug("USING FALLBACK SUBPROCESS")
+        
+        try:
+            # Trova python exe
+            python_exe = sys.executable
+            
+            # Comando rembg
+            cmd = [
+                python_exe, "-m", "rembg", "i",
+                "-m", self.model_name,
+                input_path,
+                output_path
+            ]
+            
+            debug(f"CMD: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            debug(f"Return code: {result.returncode}")
+            debug(f"Stdout: {result.stdout[:200]}")
+            debug(f"Stderr: {result.stderr[:200]}")
+            
+            if result.returncode == 0 and os.path.exists(output_path):
+                debug("Fallback SUCCESS!")
+                return True
+            else:
+                debug(f"Fallback FAILED: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            debug(f"Fallback error: {e}")
             return False

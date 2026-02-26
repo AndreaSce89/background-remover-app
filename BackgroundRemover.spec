@@ -7,10 +7,21 @@ block_cipher = None
 
 base_path = Path('.')
 
+# Trova tutti i binari necessari
+binaries = []
+
+# Aggiungi onnxruntime se possibile
+try:
+    import onnxruntime
+    onnx_path = Path(onnxruntime.__file__).parent
+    binaries.append((str(onnx_path / 'onnxruntime_providers_shared.dll'), '.'))
+except:
+    pass
+
 a = Analysis(
     ['main.py'],
     pathex=[str(base_path)],
-    binaries=[],
+    binaries=binaries,
     datas=[
         ('utils', 'utils'),
         ('u2net.onnx', '.'),
@@ -25,16 +36,23 @@ a = Analysis(
         'rembg.session_factory',
         'rembg.bg',
         'onnxruntime',
+        'onnxruntime.capi',
+        'onnxruntime.capi.onnxruntime_pybind11_state',
         'PIL',
         'PIL.Image',
         'PIL.ImageOps',
         'numpy',
+        'numpy.core._dtype_ctypes',
         'scipy',
         'scipy._lib',
+        'scipy._lib.messagestream',
         'pymatting',
         'pymatting.util',
+        'pymatting.util.boxfilter',
         'skimage',
         'imageio',
+        'imageio.plugins',
+        'imageio.plugins.pillow',
         'tqdm',
     ],
     hookspath=[],
@@ -60,10 +78,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # DISABILITATO per evitare problemi
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,  # CAMBIATO: True per vedere errori!
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -8,41 +8,47 @@ on:
 
 jobs:
   build-windows:
-    name: 🪟 Costruisci per Windows
+    name: 🪟 Build Windows
     runs-on: windows-latest
     
     steps:
-      - name: 📥 Scarica i file
+      - name: 📥 Checkout
         uses: actions/checkout@v4
       
-      - name: 🐍 Installa Python
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
-      - name: 📦 Installa dipendenze
+      - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt
+          pip install pyinstaller pillow numpy
+          pip install rembg==2.0.52 onnxruntime==1.16.3
       
-      - name: 🧠 Scarica modello U2Net e copia in cartella locale
+      - name: 🧠 Download U2Net model
         run: |
           python -c "from rembg import new_session; s = new_session('u2net')"
-          # Trova dove è stato scaricato e copialo
-          $userProfile = $env:USERPROFILE
-          $cachePath = "$userProfile\.u2net"
-          if (Test-Path $cachePath) {
-            Copy-Item -Path $cachePath\u2net.onnx -Destination . -ErrorAction SilentlyContinue
-            Write-Host "Modello copiato in $(Get-Location)"
-          }
-        shell: pwsh
+          # Copia modello nella cartella del progetto
+          copy %USERPROFILE%\.u2net\u2net.onnx . /Y
+        shell: cmd
       
-      - name: 🏗️ Crea file EXE con modello incluso
+      - name: 🏗️ Build EXE
         run: |
-          pyinstaller --clean --onefile --windowed --name "BackgroundRemover" --add-data "utils;utils" --add-data "u2net.onnx;." main.py
+          pyinstaller --clean --onefile --windowed ^
+            --name "BackgroundRemover" ^
+            --add-data "utils;utils" ^
+            --add-data "u2net.onnx;." ^
+            --hidden-import "rembg" ^
+            --hidden-import "rembg.session_factory" ^
+            --hidden-import "onnxruntime" ^
+            --hidden-import "PIL" ^
+            --hidden-import "PIL.Image" ^
+            --hidden-import "numpy" ^
+            main.py
+        shell: cmd
       
-      - name: 🎁 Salva il file
+      - name: 🎁 Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: BackgroundRemover-Windows

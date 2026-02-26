@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Background Remover App - Versione Definitiva
+Background Remover App - Versione Debug
 """
 
 import sys
@@ -14,15 +14,14 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QFileDialog,
     QProgressBar, QPlainTextEdit, QGroupBox, QSpinBox, QCheckBox,
-    QMessageBox, QSplitter, QStatusBar, QMenuBar, QAction,
-    QDialog, QDialogButtonBox
+    QMessageBox, QSplitter, QStatusBar
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
 from PyQt5.QtGui import QFont
 
 
 class ProcessingThread(QThread):
-    """Thread per elaborazione con logging interno"""
+    """Thread con logging dettagliato"""
     progress_updated = pyqtSignal(int, int, str)
     file_processed = pyqtSignal(str, bool, str)
     processing_finished = pyqtSignal(int, int)
@@ -31,25 +30,17 @@ class ProcessingThread(QThread):
     def __init__(self, file_paths, output_dir, quality=95, overwrite=False):
         super().__init__()
         self.file_paths = list(file_paths)
-        # Normalizza percorso output
-        self.output_dir = os.path.normpath(str(output_dir))
+        self.output_dir = str(output_dir)
         self.quality = int(quality)
         self.overwrite = bool(overwrite)
         self.is_running = True
         self.remover = None
-        self.debug_logs = []  # Per catturare errori interni
-        
-    def debug(self, msg):
-        """Salva messaggi di debug"""
-        self.debug_logs.append(msg)
-        self.log_message.emit(msg)
         
     def run(self):
-        # Import dentro il thread
         try:
             from utils.image_processor import BackgroundRemover
         except Exception as e:
-            self.debug(f"❌ Errore import: {str(e)}")
+            self.log_message.emit(f"❌ Import fallito: {str(e)}")
             self.processing_finished.emit(0, len(self.file_paths))
             return
         
@@ -59,95 +50,95 @@ class ProcessingThread(QThread):
         
         # Inizializza AI
         try:
-            self.debug("🧠 Caricamento AI...")
+            self.log_message.emit("🧠 Caricamento AI...")
             self.remover = BackgroundRemover()
-            self.debug("✅ AI pronta!")
+            self.log_message.emit("✅ AI pronta!")
         except Exception as e:
-            err_msg = str(e)
-            self.debug(f"❌ Errore AI: {err_msg[:60]}")
+            self.log_message.emit(f"❌ Errore AI: {str(e)}")
             self.processing_finished.emit(0, total)
             return
         
-        self.debug(f"🚀 Avvio {total} immagini...")
-        self.debug("-" * 30)
+        self.log_message.emit(f"🚀 Avvio {total} immagini...")
+        self.log_message.emit("-" * 30)
         
         for idx, file_path in enumerate(self.file_paths, 1):
             if not self.is_running:
                 break
             
-            # Normalizza percorso input
             file_path = os.path.normpath(file_path)
             filename = os.path.basename(file_path)
             
             self.progress_updated.emit(idx, total, filename)
             
-            # Verifica file esiste
+            # Verifica input
             if not os.path.exists(file_path):
                 error_count += 1
-                self.file_processed.emit(filename, False, "File non trovato")
-                self.debug(f"❌ [{idx}/{total}] File non trovato: {filename}")
+                self.file_processed.emit(filename, False, "Non trovato")
+                self.log_message.emit(f"❌ [{idx}/{total}] File non trovato")
                 continue
             
-            # Crea percorso output
+            # Crea output path
             name_no_ext = Path(filename).stem
             output_path = os.path.join(self.output_dir, f"{name_no_ext}_nobg.png")
             output_path = os.path.normpath(output_path)
             
-            # Controlla se esiste
+            self.log_message.emit(f"🔄 [{idx}/{total}] {filename[:20]}...")
+            self.log_message.emit(f"   Input:  {file_path}")
+            self.log_message.emit(f"   Output: {output_path}")
+            
+            # Controlla esistente
             if os.path.exists(output_path) and not self.overwrite:
                 self.file_processed.emit(filename, True, "Saltato")
-                self.debug(f"⏭️ [{idx}/{total}] Saltato (esiste)")
+                self.log_message.emit(f"   ⏭️ Saltato (esiste già)")
                 continue
             
-            self.debug(f"🔄 [{idx}/{total}] {filename[:25]}...")
+            # Verifica cartella output scrivibile
+            out_dir = os.path.dirname(output_path)
+            try:
+                if not os.path.exists(out_dir):
+                    os.makedirs(out_dir, exist_ok=True)
+                    self.log_message.emit(f"   📁 Creata cartella: {out_dir}")
+            except Exception as e:
+                error_count += 1
+                self.file_processed.emit(filename, False, "Cartella")
+                self.log_message.emit(f"   ❌ Errore cartella: {str(e)}")
+                continue
             
             # Elabora
             try:
                 success = self.remover.remove_background(file_path, output_path, self.quality)
                 
                 if success:
-                    success_count += 1
-                    self.file_processed.emit(filename, True, "OK")
-                    self.debug(f"✅ OK")
+                    # Verifica file creato
+                    if os.path.exists(output_path):
+                        size = os.path.getsize(output_path)
+                        success_count += 1
+                        self.file_processed.emit(filename, True, f"OK ({size//1024}KB)")
+                        self.log_message.emit(f"   ✅ OK - {size//1024}KB")
+                    else:
+                        error_count += 1
+                        self.file_processed.emit(filename, False, "Non creato")
+                        self.log_message.emit(f"   ❌ File non creato")
                 else:
                     error_count += 1
                     self.file_processed.emit(filename, False, "Fallito")
-                    self.debug(f"❌ Elaborazione fallita")
+                    self.log_message.emit(f"   ❌ remove_background ha restituito False")
                     
             except Exception as e:
                 error_count += 1
                 err_msg = str(e)
                 self.file_processed.emit(filename, False, "Errore")
-                self.debug(f"❌ Errore: {err_msg[:50]}")
+                self.log_message.emit(f"   ❌ Eccezione: {err_msg[:50]}")
+                # Stampa traceback completo su stderr (visibile se lanci da console)
+                print(f"ERRORE DETTAGLIATO su {filename}:")
+                traceback.print_exc()
         
-        self.debug("-" * 30)
-        self.debug(f"🏁 OK:{success_count} Err:{error_count}")
+        self.log_message.emit("-" * 30)
+        self.log_message.emit(f"🏁 OK:{success_count} Err:{error_count}")
         self.processing_finished.emit(success_count, error_count)
-
-
-class AboutDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Info")
-        self.setFixedSize(300, 150)
-        
-        layout = QVBoxLayout(self)
-        
-        title = QLabel("🖼️ Background Remover v1.0")
-        f = QFont()
-        f.setPointSize(12)
-        f.setBold(True)
-        title.setFont(f)
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-        
-        info = QLabel("AI U2Net - Rimozione sfondi locale")
-        info.setAlignment(Qt.AlignCenter)
-        layout.addWidget(info)
-        
-        btn = QDialogButtonBox(QDialogButtonBox.Ok)
-        btn.accepted.connect(self.accept)
-        layout.addWidget(btn)
+    
+    def stop(self):
+        self.is_running = False
 
 
 class MainWindow(QMainWindow):
@@ -164,7 +155,7 @@ class MainWindow(QMainWindow):
         
     def setup_ui(self):
         self.setWindowTitle("🖼️ Background Remover")
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(750, 550)
         
         central = QWidget()
         self.setCentralWidget(central)
@@ -241,10 +232,9 @@ class MainWindow(QMainWindow):
         
         v_set.addStretch()
         
-        lbl_ai = QLabel("🤖 AI: U2Net")
-        lbl_ai.setStyleSheet("color: green; font-weight: bold;")
-        lbl_ai.setAlignment(Qt.AlignCenter)
-        v_set.addWidget(lbl_ai)
+        self.lbl_ai = QLabel("⏳ In attesa...")
+        self.lbl_ai.setAlignment(Qt.AlignCenter)
+        v_set.addWidget(self.lbl_ai)
         
         top_l.addWidget(box_set, 1)
         
@@ -267,12 +257,12 @@ class MainWindow(QMainWindow):
         
         bot_l.addWidget(box_prog)
         
-        box_log = QGroupBox("📝 Log")
+        box_log = QGroupBox("📝 Log (dettagliato)")
         v_log = QVBoxLayout(box_log)
         
         self.log_txt = QPlainTextEdit()
         self.log_txt.setReadOnly(True)
-        self.log_txt.setMaximumBlockCount(200)
+        self.log_txt.setMaximumBlockCount(500)
         v_log.addWidget(self.log_txt)
         
         bot_l.addWidget(box_log)
@@ -285,51 +275,31 @@ class MainWindow(QMainWindow):
         bot_l.addWidget(self.btn_go)
         
         split.addWidget(bot)
-        split.setSizes([180, 250])
+        split.setSizes([200, 300])
         
         # Status
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("Pronto")
         
-        # Menu
-        mb = self.menuBar()
-        mfile = mb.addMenu("File")
-        
-        aopen = QAction("📁 Apri", self)
-        aopen.setShortcut("Ctrl+O")
-        aopen.triggered.connect(self.on_select)
-        mfile.addAction(aopen)
-        
-        aexit = QAction("❌ Esci", self)
-        aexit.setShortcut("Ctrl+Q")
-        aexit.triggered.connect(self.close)
-        mfile.addAction(aexit)
-        
-        mhelp = mb.addMenu("Aiuto")
-        aabout = QAction("ℹ️ Info", self)
-        aabout.triggered.connect(self.show_about)
-        mhelp.addAction(aabout)
-        
         # Stili
         self.setStyleSheet("""
             QMainWindow { background: #f0f0f0; }
             QGroupBox { font-weight: bold; border: 1px solid #bbb; border-radius: 3px; margin-top: 5px; padding-top: 5px; background: white; }
-            QGroupBox::title { subcontrol-origin: margin; left: 5px; padding: 0 2px; }
             QPushButton { background: #e0e0e0; border: 1px solid #aaa; border-radius: 3px; padding: 5px; font-weight: bold; }
             QPushButton:hover { background: #d5d5d5; }
             QPushButton:disabled { background: #f0f0f0; color: #999; }
             QListWidget { border: 1px solid #ccc; background: #fafafa; }
             QProgressBar { border: 1px solid #ccc; text-align: center; }
             QProgressBar::chunk { background: #4CAF50; }
-            QPlainTextEdit { border: 1px solid #ccc; background: #2d2d2d; color: #eee; font-family: Consolas; font-size: 9px; }
+            QPlainTextEdit { border: 1px solid #ccc; background: #1e1e1e; color: #d4d4d4; font-family: Consolas; font-size: 9px; }
         """)
         
     def load_settings(self):
         saved = self.settings.value("output_dir", "")
         if saved:
             self.output_dir = str(saved)
-            disp = self.output_dir[:25] + "..." if len(self.output_dir) > 25 else self.output_dir
+            disp = self.output_dir[:30] + "..." if len(self.output_dir) > 30 else self.output_dir
             self.lbl_out.setText(f"📁 {disp}")
         
     def save_settings(self):
@@ -339,18 +309,20 @@ class MainWindow(QMainWindow):
         try:
             files, _ = QFileDialog.getOpenFileNames(
                 self, "Seleziona Immagini", "", 
-                "Immagini (*.png *.jpg *.jpeg *.bmp *.tiff *.webp *.gif)"
+                "Immagini (*.png *.jpg *.jpeg *.bmp *.tiff *.webp)"
             )
             if files:
                 valid = []
                 for f in files:
                     ext = Path(f).suffix.lower()
-                    if ext in {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif', '.webp', '.gif'}:
+                    if ext in {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif', '.webp'}:
                         valid.append(f)
                 
                 self.input_files = valid
                 self.update_list()
-                self.add_log(f"📂 {len(valid)} immagini caricate")
+                self.log(f"📂 {len(valid)} immagini caricate")
+                for f in valid:
+                    self.log(f"   - {os.path.basename(f)}")
                 self.check_ready()
         except Exception as e:
             QMessageBox.critical(self, "Errore", f"Errore selezione: {str(e)}")
@@ -366,7 +338,7 @@ class MainWindow(QMainWindow):
         self.list_files.clear()
         self.lbl_count.setText("0 immagini")
         self.check_ready()
-        self.add_log("🗑️ Lista svuotata")
+        self.log("🗑️ Lista svuotata")
         
     def on_output(self):
         try:
@@ -375,13 +347,12 @@ class MainWindow(QMainWindow):
                 self.output_dir or str(Path.home())
             )
             if d:
-                # Normalizza percorso
                 self.output_dir = os.path.normpath(d)
-                disp = self.output_dir[:25] + "..." if len(self.output_dir) > 25 else self.output_dir
+                disp = self.output_dir[:30] + "..." if len(self.output_dir) > 30 else self.output_dir
                 self.lbl_out.setText(f"📁 {disp}")
                 self.save_settings()
                 self.check_ready()
-                self.add_log(f"📂 Output: {self.output_dir}")
+                self.log(f"📂 Output: {self.output_dir}")
         except Exception as e:
             QMessageBox.critical(self, "Errore", f"Errore cartella: {str(e)}")
             
@@ -402,7 +373,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Attenzione", "Seleziona immagini e cartella output!")
             return
         
-        # Verifica cartella output esiste
         if not os.path.isdir(self.output_dir):
             QMessageBox.warning(self, "Errore", "Cartella output non valida!")
             return
@@ -423,7 +393,7 @@ class MainWindow(QMainWindow):
             self.thread.progress_updated.connect(self.on_progress)
             self.thread.file_processed.connect(self.on_file_done)
             self.thread.processing_finished.connect(self.on_finish)
-            self.thread.log_message.connect(self.add_log)
+            self.thread.log_message.connect(self.log)
             
             self.thread.start()
             
@@ -450,20 +420,17 @@ class MainWindow(QMainWindow):
         self.lbl_curr.setText("Completato")
         
         if err == 0:
-            QMessageBox.information(self, "Successo", f"✅ Tutte le immagini elaborate con successo!\nTotale: {ok}")
+            QMessageBox.information(self, "Successo", f"✅ Tutte le immagini elaborate!\nTotale: {ok}")
         else:
             QMessageBox.information(self, "Completato", f"✅ OK: {ok}\n❌ Errori: {err}")
         
         self.status.showMessage(f"🏁 Completato: {ok} successi, {err} errori")
         
-    def add_log(self, msg):
+    def log(self, msg):
         t = datetime.now().strftime("%H:%M:%S")
         self.log_txt.appendPlainText(f"[{t}] {msg}")
         sb = self.log_txt.verticalScrollBar()
         sb.setValue(sb.maximum())
-        
-    def show_about(self):
-        AboutDialog(self).exec_()
         
     def closeEvent(self, event):
         if self.thread and self.thread.isRunning():

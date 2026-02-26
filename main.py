@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QListWidget,
     QProgressBar, QMessageBox, QSpinBox, QGroupBox, QTextEdit,
-    QListWidgetItem, QMenu, QAction, QAbstractItemView
+    QListWidgetItem, QMenu, QAction, QAbstractItemView, QFileDialog.Options,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMetaObject, Q_ARG, QUrl
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QPixmap
@@ -465,24 +465,35 @@ class MainWindow(QMainWindow):
                     f"Formati cercati: {', '.join(SUPPORTED_FORMATS[:5])}..."
                 )
     
-    def browse_files(self):
-        """Seleziona singoli file"""
+        def browse_files(self):
+        """Seleziona singoli file - VERSIONE CORRETTA"""
+        # FIX: Filtro file corretto per Windows
+        # Crea pattern tipo: "Immagini (*.png *.jpg *.jpeg ...)"
+        extensions = ' '.join([f'*{ext}' for ext in SUPPORTED_FORMATS[:15]])
+        filter_str = f"Immagini ({extensions});;Tutti i file (*.*)"
+        
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Seleziona immagini",
-            "",
-            f"Immagini ({' '.join(SUPPORTED_FORMATS)});;Tutti i file (*.*)"
+            "",  # Cartella default (vuoto = ultima usata o Documenti)
+            filter_str,
+            options=QFileDialog.Options()  # FIX: Opzioni di default
         )
+        
         if files:
             added = 0
             for f in files:
+                # FIX: Normalizza path ricevuto da dialog
+                f = os.path.normpath(f)
                 if self.is_image_file(f):
-                    self.add_single_file(f)
-                    added += 1
+                    if f not in self.files_list:
+                        self.files_list.append(f)
+                        added += 1
             
             self.update_list_display()
             self.log(f"📎 Aggiunti {added} file singoli")
             
+            # Suggerisci output automatico
             if self.files_list and not self.out_edit.text():
                 self.auto_output()
     
@@ -551,12 +562,48 @@ class MainWindow(QMainWindow):
         self.update_list_display()
         self.log(f"🗑️ Rimossi {len(selected)} file")
     
-    def clear_files(self):
-        """Pulisce tutta la lista"""
+      def clear_all(self):
+        """Pulisce tutto - VERSIONE CORRETTA"""
+        # Azzera lista
         self.files_list.clear()
-        self.update_list_display()
+        self.list_widget.clear()
+        self.log_text.clear()
         self.in_edit.clear()
-        self.log("🗑️ Lista pulita")
+        self.out_edit.clear()
+        
+        # =================================================================
+        # FIX: Azzeramento completo progress bar
+        # =================================================================
+        self.progress.setValue(0)
+        self.progress.setMaximum(100)  # Reset maximum
+        self.progress.setFormat("Pronto")  # Testo default
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #4CAF50;
+                border-radius: 6px;
+                text-align: center;
+                height: 30px;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;  /* Verde normale */
+            }
+        """)
+        
+        # Reset stato
+        self.status_label.setText("Pronto - carica immagini")
+        self.start_btn.setEnabled(False)
+        self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
+        
+        # Ferma worker se attivo
+        if self.worker and self.worker.isRunning():
+            self.worker.stop()
+            self.worker.wait(1000)
+        
+        # Aggiorna contatore lista
+        self.update_list_display()
+        
+        logger.info("Pulizia completa interfaccia")
     
     def preview_selected(self):
         """Mostra anteprima immagine selezionata"""
@@ -940,4 +987,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

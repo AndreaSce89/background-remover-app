@@ -22,39 +22,41 @@ a = Analysis(
         'onnxruntime',
         'PIL',
         'PyQt5.sip',
+        'PyQt5.QtWidgets',
+        'PyQt5.QtCore',
+        'PyQt5.QtGui',
         'numpy',
         'scipy',
         'scipy._lib',
         'scipy._lib.array_api_compat',
+        'scipy._lib.array_api_compat.numpy.fft',
         'scipy.sparse',
+        'scipy.sparse._sputils',
         'pymatting',
         'pymatting.util',
         'pymatting.util.boxfilter',
+        'pymatting.util.util',
+        'xml',
+        'xml.etree',
+        'xml.etree.ElementTree',
+        'email',
+        'email.mime',
+        'email.mime.text',
+        'email.mime.multipart',
+        'plistlib',
+        'pkg_resources',
+        'importlib.metadata',
+        'pathlib',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        'matplotlib',
-        'tkinter',
-        'unittest',
-        'pydoc',
-        'email',
-        'http',
-        'html',
-        'ssl',
-        'asyncio',
-    ],
+    excludes=[],  # ← TOLTO TUTTO, niente più esclusioni!
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
-
-# Aggiungi metadati mancanti
-import pymatting
-import rembg
-import scipy
 
 # PyZ (compressione)
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

@@ -7,25 +7,31 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2019  # Windows 2019 più stabile per onnx
     
     steps:
     - uses: actions/checkout@v4
     
     - uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.10'  # 3.10 più stabile di 3.11 per PyInstaller
+    
+    - name: Install Visual C++ Redistributable
+      shell: pwsh
+      run: |
+        choco install vcredist2019 -y
     
     - name: Cache model
       uses: actions/cache@v3
       with:
         path: ~/.u2net
-        key: u2net-v1
+        key: u2net-v2
     
     - name: Install dependencies
       run: |
-        pip install pyinstaller
-        pip install PyQt5 rembg pillow onnxruntime numpy
+        python -m pip install --upgrade pip
+        pip install pyinstaller==6.3.0  # Versione stabile
+        pip install -r requirements.txt
     
     - name: Download model
       shell: pwsh
@@ -34,28 +40,40 @@ jobs:
         $file = "$dir\u2net.onnx"
         if (!(Test-Path $file)) {
           New-Item -ItemType Directory -Force -Path $dir
-          Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" -OutFile $file
+          Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" -OutFile $file -TimeoutSec 300
         }
         Get-Item $file | Select-Object Name, @{N="SizeMB";E={[math]::Round($_.Length/1MB,2)}}
     
-    - name: Build EXE
+    - name: Build EXE (senza hidden imports problematici)
       run: |
-        pyinstaller --noconfirm --clean BackgroundRemover.spec
+        pyinstaller --noconfirm --clean --onefile --console `
+          --add-data "utils;utils" `
+          --add-data "$env:USERPROFILE\.u2net\u2net.onnx;.u2net" `
+          --hidden-import PyQt5 `
+          --hidden-import PyQt5.sip `
+          --hidden-import rembg `
+          --hidden-import PIL `
+          --hidden-import PIL.Image `
+          --hidden-import numpy `
+          --hidden-import onnxruntime `
+          --collect-all onnxruntime `
+          --name BackgroundRemover `
+          main.py
     
-    - name: Test EXE exists
+    - name: Verify
       shell: pwsh
       run: |
-        $exe = "dist\BackgroundRemover.exe"
-        if (Test-Path $exe) {
-          $size = (Get-Item $exe).Length / 1MB
-          Write-Host "EXE creato: $([math]::Round($size,2)) MB"
+        if (Test-Path "dist\BackgroundRemover.exe") {
+          $size = (Get-Item "dist\BackgroundRemover.exe").Length / 1MB
+          Write-Host "✅ EXE creato: $([math]::Round($size,2)) MB"
         } else {
-          Write-Error "EXE non trovato!"
+          Write-Error "❌ EXE non trovato"
           exit 1
         }
     
-    - name: Upload artifact
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: BackgroundRemover-Fixed
+        name: BackgroundRemover-EXE
         path: dist/BackgroundRemover.exe
+        retention-days: 30

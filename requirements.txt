@@ -3,6 +3,7 @@
 
 # GUI
 PyQt5==5.15.10
+PyQt5-Qt5==5.15.2
 
 # Image Processing
 Pillow==10.1.0
@@ -11,8 +12,13 @@ Pillow==10.1.0
 rembg==2.0.52
 onnxruntime==1.16.3
 
-# Utilities
+# Dipendenze necessarie
 numpy==1.24.3
+scipy==1.11.4
+pymatting==1.1.12
+scikit-image==0.22.0
+imageio==2.31.1
+tqdm==4.66.1
 
 # Builder
 pyinstaller==6.3.0

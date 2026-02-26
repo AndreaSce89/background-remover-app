@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Image Processor - Versione stabile con debug
+Image Processor - Versione stabile con debug completo
 """
 
 import os
@@ -61,18 +61,20 @@ class BackgroundRemover:
                 print(f"ERRORE: File non trovato: {input_path}")
                 return False
             
-            # Verifica che la cartella output esista
+            # Verifica cartella output
             out_dir = os.path.dirname(output_path)
             if out_dir and not os.path.exists(out_dir):
                 try:
                     os.makedirs(out_dir, exist_ok=True)
+                    print(f"Creata cartella: {out_dir}")
                 except Exception as e:
-                    print(f"ERRORE: Impossibile creare cartella: {e}")
+                    print(f"ERRORE: Impossibile creare cartella {out_dir}: {e}")
                     return False
             
             # Carica immagine
             try:
                 img = Image.open(input_path)
+                print(f"Immagine caricata: {img.size}, mode: {img.mode}")
             except Exception as e:
                 print(f"ERRORE: Impossibile aprire immagine: {e}")
                 return False
@@ -80,10 +82,13 @@ class BackgroundRemover:
             # Converti
             if img.mode in ('RGBA', 'P', 'LA', 'L'):
                 img = img.convert('RGB')
+                print(f"Convertita in RGB")
             
             # Rimuovi sfondo
             try:
+                print("Avvio rimozione sfondo...")
                 out = remove(img, session=self.session)
+                print("Sfondo rimosso")
             except Exception as e:
                 print(f"ERRORE: Rimozione sfondo fallita: {e}")
                 traceback.print_exc()
@@ -92,19 +97,23 @@ class BackgroundRemover:
             # Converti in RGBA
             if out.mode != 'RGBA':
                 out = out.convert('RGBA')
+                print("Convertita in RGBA")
             
-            # Riduci qualità se richiesto
+            # Riduci qualità
             if quality < 100:
                 w, h = out.size
                 out = out.resize((int(w*quality/100), int(h*quality/100)), Image.Resampling.LANCZOS)
+                print(f"Ridimensionata a {quality}%")
             
             # Salva
             try:
+                print(f"Salvataggio in: {output_path}")
                 out.save(output_path, 'PNG', optimize=True)
-                print(f"OK: Salvato in {output_path}")
+                print(f"OK: Salvato con successo")
                 return True
             except Exception as e:
                 print(f"ERRORE: Salvataggio fallito: {e}")
+                traceback.print_exc()
                 return False
             
         except Exception as e:

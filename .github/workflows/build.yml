@@ -31,14 +31,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir
           Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" -OutFile $file
         }
-        Write-Host "Modello pronto:" (Get-Item $file).Length "bytes"
+        Write-Host "Modello:" (Get-Item $file).Length "bytes"
     
     - name: Build EXE
       run: |
-        pyinstaller --noconfirm --clean --onefile --console --name BackgroundRemover main.py
+        pyinstaller --noconfirm --clean --onefile --windowed --name BackgroundRemover main.py
     
     - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: BackgroundRemover-EXE
+        name: BackgroundRemover-v3
         path: dist/BackgroundRemover.exe

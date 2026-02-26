@@ -1,52 +1,61 @@
-name: 🎨 Build Background Remover App
+name: Build EXE
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
-  build-windows:
-    name: 🪟 Build Windows
+  build:
     runs-on: windows-latest
     
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
-      
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: 📦 Install ALL dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install PyQt5==5.15.10
-          pip install Pillow==10.1.0
-          pip install rembg==2.0.52
-          pip install onnxruntime==1.16.3
-          pip install numpy==1.24.3
-          pip install scipy==1.11.4
-          pip install pymatting==1.1.12
-          pip install scikit-image==0.22.0
-          pip install imageio==2.31.1
-          pip install tqdm==4.66.1
-      
-      - name: 🧠 Download U2Net model
-        run: |
-          python -c "from rembg import new_session; s = new_session('u2net')"
-          copy %USERPROFILE%\.u2net\u2net.onnx . /Y
-        shell: cmd
-      
-      - name: 🏗️ Build EXE with SPEC
-        run: |
-          pyinstaller BackgroundRemover.spec
-      
-      - name: 🎁 Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BackgroundRemover-Windows
-          path: dist/BackgroundRemover.exe
+    - uses: actions/checkout@v4
+    
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Cache model
+      uses: actions/cache@v3
+      with:
+        path: ~/.u2net
+        key: u2net-v1
+    
+    - name: Install dependencies
+      run: |
+        pip install pyinstaller
+        pip install PyQt5 rembg pillow onnxruntime numpy
+    
+    - name: Download model
+      shell: pwsh
+      run: |
+        $dir = "$env:USERPROFILE\.u2net"
+        $file = "$dir\u2net.onnx"
+        if (!(Test-Path $file)) {
+          New-Item -ItemType Directory -Force -Path $dir
+          Invoke-WebRequest -Uri "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" -OutFile $file
+        }
+        Get-Item $file | Select-Object Name, @{N="SizeMB";E={[math]::Round($_.Length/1MB,2)}}
+    
+    - name: Build EXE
+      run: |
+        pyinstaller --noconfirm --clean BackgroundRemover.spec
+    
+    - name: Test EXE exists
+      shell: pwsh
+      run: |
+        $exe = "dist\BackgroundRemover.exe"
+        if (Test-Path $exe) {
+          $size = (Get-Item $exe).Length / 1MB
+          Write-Host "EXE creato: $([math]::Round($size,2)) MB"
+        } else {
+          Write-Error "EXE non trovato!"
+          exit 1
+        }
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: BackgroundRemover-Fixed
+        path: dist/BackgroundRemover.exe

@@ -23,52 +23,27 @@ jobs:
       - name: 📦 Installa dipendenze
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
           pip install pyinstaller
+          pip install -r requirements.txt
       
-      - name: 🧠 Scarica modello U2Net
+      - name: 🧠 Scarica modello U2Net e copia in cartella locale
         run: |
           python -c "from rembg import new_session; s = new_session('u2net')"
+          # Trova dove è stato scaricato e copialo
+          $userProfile = $env:USERPROFILE
+          $cachePath = "$userProfile\.u2net"
+          if (Test-Path $cachePath) {
+            Copy-Item -Path $cachePath\u2net.onnx -Destination . -ErrorAction SilentlyContinue
+            Write-Host "Modello copiato in $(Get-Location)"
+          }
+        shell: pwsh
       
-      - name: 🏗️ Crea file EXE
+      - name: 🏗️ Crea file EXE con modello incluso
         run: |
-          pyinstaller BackgroundRemover.spec
+          pyinstaller --clean --onefile --windowed --name "BackgroundRemover" --add-data "utils;utils" --add-data "u2net.onnx;." main.py
       
       - name: 🎁 Salva il file
         uses: actions/upload-artifact@v4
         with:
           name: BackgroundRemover-Windows
           path: dist/BackgroundRemover.exe
-
-  build-macos:
-    name: 🍎 Costruisci per Mac (Bonus)
-    runs-on: macos-latest
-    
-    steps:
-      - name: 📥 Scarica i file
-        uses: actions/checkout@v4
-      
-      - name: 🐍 Installa Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: 📦 Installa dipendenze
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-      
-      - name: 🧠 Scarica modello U2Net
-        run: |
-          python -c "from rembg import new_session; s = new_session('u2net')"
-      
-      - name: 🏗️ Crea file per Mac
-        run: |
-          pyinstaller BackgroundRemover.spec
-      
-      - name: 🎁 Salva il file Mac
-        uses: actions/upload-artifact@v4
-        with:
-          name: BackgroundRemover-Mac
-          path: dist/BackgroundRemover

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Background Remover - GUI Stabile
-Popup errori, log automatico, nessun CMD richiesto
+Background Remover Pro v3.1 - DEFINITIVO
+Fix: creazione cartella, formati immagine, selezione singola/multipla
 """
 
 import sys
 import os
+from pathlib import Path
 
 # Fix path PyInstaller
 if getattr(sys, 'frozen', False):
@@ -17,21 +18,20 @@ else:
 if bundle_dir not in sys.path:
     sys.path.insert(0, bundle_dir)
 
-# Import logger prima di tutto
-from logger import get_logger, AppLogger
+# Logger
+from logger import get_logger
 logger = get_logger()
 
-# PyQt5
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QListWidget,
     QProgressBar, QMessageBox, QSpinBox, QGroupBox, QTextEdit,
-    QSystemTrayIcon, QMenu, QAction
+    QListWidgetItem, QMenu, QAction, QAbstractItemView
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMetaObject, Q_ARG
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QIcon, QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMetaObject, Q_ARG, QUrl
+from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QPixmap
 
-# Blocca output console su Windows
+# Nascondi console
 if sys.platform == 'win32':
     try:
         import ctypes
@@ -40,12 +40,27 @@ if sys.platform == 'win32':
         pass
 
 
+# =============================================================================
+# FORMATI SUPPORTATI (TUTTI)
+# =============================================================================
+SUPPORTED_FORMATS = (
+    '.png', '.jpg', '.jpeg', '.jpe', '.jfif',
+    '.bmp', '.dib', '.gif', '.tiff', '.tif',
+    '.webp', '.raw', '.arw', '.cr2', '.nrw',
+    '.k25', '.nef', '.orf', '.raf', '.rw2',
+    '.sr2', '.srf', '.srw', '.x3f', '.dng',
+    '.pef', '.ptx', '.pxn', '.r3d', '.3fr',
+    '.erf', '.mef', '.mos', '.qtk', '.rdc'
+)
+
+SUPPORTED_GLOB = ['*' + ext for ext in SUPPORTED_FORMATS]
+
+
 class WorkerThread(QThread):
-    """Thread elaborazione con segnali thread-safe"""
     log_signal = pyqtSignal(str)
-    progress_signal = pyqtSignal(int, int, str)  # current, total, filename
-    finished_signal = pyqtSignal(dict)  # stats
-    error_signal = pyqtSignal(str, str)  # title, message
+    progress_signal = pyqtSignal(int, int, str)
+    finished_signal = pyqtSignal(dict)
+    error_signal = pyqtSignal(str, str)
     
     def __init__(self, file_paths, output_dir, quality):
         super().__init__()
@@ -58,26 +73,19 @@ class WorkerThread(QThread):
         try:
             from utils.image_processor import BackgroundRemover
             
-            # Inizializza AI
             self.log_signal.emit("🧠 Inizializzazione AI...")
             try:
                 remover = BackgroundRemover()
                 self.log_signal.emit("✅ AI Pronta!")
             except Exception as e:
-                logger.error("Inizializzazione AI fallita", e)
-                self.error_signal.emit(
-                    "Errore AI", 
-                    f"Impossibile caricare l'intelligenza artificiale.\n\n"
-                    f"Dettaglio: {str(e)}\n\n"
-                    f"Verificare l'installazione e riavviare."
-                )
+                logger.error("AI init failed", e)
+                self.error_signal.emit("Errore AI", str(e))
                 self.finished_signal.emit({'error': True, 'message': str(e)})
                 return
             
-            # Elaborazione
-            def progress_callback(current, total, filename):
+            def progress_cb(current, total, filename):
                 if not self._is_running:
-                    raise InterruptedError("Utente interrotto")
+                    raise InterruptedError
                 self.progress_signal.emit(current, total, filename)
                 self.log_signal.emit(f"🔄 [{current}/{total}] {filename}")
             
@@ -85,21 +93,16 @@ class WorkerThread(QThread):
                 self.file_paths,
                 self.output_dir,
                 self.quality,
-                callback=progress_callback
+                callback=progress_cb
             )
             
             self.finished_signal.emit(stats)
             
         except InterruptedError:
-            logger.info("Elaborazione interrotta dall'utente")
             self.finished_signal.emit({'interrupted': True})
         except Exception as e:
-            logger.error("Errore thread elaborazione", e)
-            self.error_signal.emit(
-                "Errore Critico",
-                f"Si è verificato un errore imprevisto:\n\n{str(e)}\n\n"
-                f"Consultare il file di log per dettagli:\n{logger.get_log_path()}"
-            )
+            logger.error("Worker error", e)
+            self.error_signal.emit("Errore", str(e))
             self.finished_signal.emit({'error': True, 'message': str(e)})
     
     def stop(self):
@@ -109,218 +112,293 @@ class WorkerThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Background Remover Pro")
-        self.setMinimumSize(1000, 800)
+        self.setWindowTitle("Background Remover Pro v3.1")
+        self.setMinimumSize(1100, 850)
         
-        # Stile
-        self.setStyleSheet("""
-            QMainWindow { background-color: #f5f5f5; }
-            QGroupBox { 
-                font-weight: bold; 
-                border: 2px solid #4CAF50; 
-                border-radius: 8px; 
-                margin-top: 10px; 
-                padding-top: 10px;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-            QPushButton { 
-                padding: 10px 20px; 
-                border-radius: 6px; 
-                font-weight: bold;
-                min-width: 100px;
-            }
-            QPushButton#start { background-color: #4CAF50; color: white; }
-            QPushButton#start:hover { background-color: #45a049; }
-            QPushButton#start:disabled { background-color: #cccccc; }
-            QPushButton#clear { background-color: #f44336; color: white; }
-            QPushButton#clear:hover { background-color: #da190b; }
-            QPushButton#browse { background-color: #2196F3; color: white; }
-            QPushButton#log { background-color: #FF9800; color: white; }
-            QProgressBar { 
-                border: 2px solid #4CAF50; 
-                border-radius: 5px; 
-                text-align: center;
-                height: 25px;
-            }
-            QProgressBar::chunk { background-color: #4CAF50; }
-            QTextEdit { 
-                border: 2px solid #ddd; 
-                border-radius: 5px; 
-                font-family: Consolas, monospace;
-                font-size: 11px;
-            }
-        """)
-        
-        self.files_list = []
+        self.files_list = []  # Lista completa path
         self.worker = None
         
         self.setup_ui()
-        self.setup_tray()
         
-        # Log iniziale
         logger.info("=" * 70)
-        logger.info("APPLICAZIONE AVVIATA")
-        logger.info(f"Log file: {logger.get_log_path()}")
+        logger.info("APPLICAZIONE AVVIATA v3.1")
         logger.info("=" * 70)
-        
-        self.statusBar().showMessage(f"Pronto - Log: {logger.get_log_path()}")
-        
-    def setup_tray(self):
-        self.tray = QSystemTrayIcon(self)
-        self.tray.setToolTip("Background Remover")
-        
-        tray_menu = QMenu()
-        show_action = QAction("Mostra", self)
-        show_action.triggered.connect(self.show)
-        exit_action = QAction("Esci", self)
-        exit_action.triggered.connect(self.close)
-        
-        tray_menu.addAction(show_action)
-        tray_menu.addAction(exit_action)
-        self.tray.setContextMenu(tray_menu)
         
     def setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setSpacing(15)
+        layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
         
         # HEADER
         header = QLabel("🖼️ Background Remover Pro")
-        header.setFont(QFont("Segoe UI", 20, QFont.Bold))
+        header.setFont(QFont("Segoe UI", 22, QFont.Bold))
         header.setAlignment(Qt.AlignCenter)
-        header.setStyleSheet("color: #4CAF50; margin-bottom: 10px;")
+        header.setStyleSheet("color: #4CAF50; margin-bottom: 15px;")
         layout.addWidget(header)
         
-        # INPUT GROUP
-        in_group = QGroupBox("📂 Cartella Input (trascina qui o clicca Sfoglia)")
-        in_layout = QHBoxLayout()
+        # =================================================================
+        # SEZIONE INPUT CON BOTTONI MULTIPLI
+        # =================================================================
+        in_group = QGroupBox("📂 Seleziona Immagini")
+        in_layout = QVBoxLayout()
+        
+        # Riga 1: Path e bottoni principali
+        path_layout = QHBoxLayout()
         self.in_edit = QLineEdit()
-        self.in_edit.setPlaceholderText("C:\\Users\\Nome\\Immagini...")
+        self.in_edit.setPlaceholderText("Clicca 'Sfoglia Cartella' o 'Aggiungi File'...")
+        self.in_edit.setReadOnly(True)
         self.in_edit.setMinimumHeight(35)
-        btn_browse_in = QPushButton("Sfoglia...")
-        btn_browse_in.setObjectName("browse")
-        btn_browse_in.clicked.connect(self.browse_input)
-        in_layout.addWidget(self.in_edit)
-        in_layout.addWidget(btn_browse_in)
+        
+        btn_folder = QPushButton("📁 Cartella")
+        btn_folder.setToolTip("Carica TUTTE le immagini da una cartella")
+        btn_folder.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 8px;")
+        btn_folder.clicked.connect(self.browse_folder)
+        
+        btn_files = QPushButton("📄 File")
+        btn_files.setToolTip("Aggiungi singole immagini")
+        btn_files.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 8px;")
+        btn_files.clicked.connect(self.browse_files)
+        
+        btn_clear_in = QPushButton("🗑️")
+        btn_clear_in.setToolTip("Pulisci lista")
+        btn_clear_in.setStyleSheet("background-color: #f44336; color: white;")
+        btn_clear_in.setMaximumWidth(50)
+        btn_clear_in.clicked.connect(self.clear_files)
+        
+        path_layout.addWidget(self.in_edit, stretch=1)
+        path_layout.addWidget(btn_folder)
+        path_layout.addWidget(btn_files)
+        path_layout.addWidget(btn_clear_in)
+        
+        in_layout.addLayout(path_layout)
+        
+        # Info formati supportati
+        formats_label = QLabel(
+            f"Formati supportati: {', '.join(SUPPORTED_FORMATS[:8])}... "
+            f"(e altri {len(SUPPORTED_FORMATS)-8} formati RAW/HEIF)"
+        )
+        formats_label.setStyleSheet("color: #666; font-size: 10px;")
+        formats_label.setWordWrap(True)
+        in_layout.addWidget(formats_label)
+        
         in_group.setLayout(in_layout)
         layout.addWidget(in_group)
         
-        # OUTPUT GROUP
-        out_group = QGroupBox("💾 Cartella Output (lascia vuoto per sottocartella 'nobg')")
+        # =================================================================
+        # LISTA FILE CON ICONE E PREVIEW
+        # =================================================================
+        list_group = QGroupBox(f"📋 File caricati (0)")
+        list_layout = QVBoxLayout()
+        
+        self.list_widget = QListWidget()
+        self.list_widget.setMinimumHeight(200)
+        self.list_widget.setMaximumHeight(300)
+        self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self.show_context_menu)
+        
+        # Stile lista
+        self.list_widget.setStyleSheet("""
+            QListWidget {
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                background-color: #fafafa;
+                alternate-background-color: #f0f0f0;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #eee;
+            }
+            QListWidget::item:selected {
+                background-color: #4CAF50;
+                color: white;
+            }
+        """)
+        self.list_widget.setAlternatingRowColors(True)
+        
+        # Drag & drop
+        self.list_widget.setAcceptDrops(True)
+        self.list_widget.dragEnterEvent = self.drag_enter
+        self.list_widget.dragMoveEvent = self.drag_move
+        self.list_widget.dropEvent = self.drop
+        
+        list_layout.addWidget(self.list_widget)
+        
+        # Bottoni lista
+        list_btn_layout = QHBoxLayout()
+        
+        btn_remove_sel = QPushButton("❌ Rimuovi selezionati")
+        btn_remove_sel.clicked.connect(self.remove_selected)
+        
+        btn_preview = QPushButton("👁️ Anteprima")
+        btn_preview.clicked.connect(self.preview_selected)
+        
+        self.list_count_label = QLabel("0 file selezionati")
+        self.list_count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        
+        list_btn_layout.addWidget(btn_remove_sel)
+        list_btn_layout.addWidget(btn_preview)
+        list_btn_layout.addStretch()
+        list_btn_layout.addWidget(self.list_count_label)
+        
+        list_layout.addLayout(list_btn_layout)
+        list_group.setLayout(list_layout)
+        self.list_group = list_group  # Riferimento per aggiornare titolo
+        layout.addWidget(list_group)
+        
+        # =================================================================
+        # OUTPUT
+        # =================================================================
+        out_group = QGroupBox("💾 Cartella Output")
         out_layout = QHBoxLayout()
+        
         self.out_edit = QLineEdit()
-        self.out_edit.setPlaceholderText("Opzionale - verrà creata automaticamente...")
-        self.out_edit.setMinimumHeight(35)
-        btn_browse_out = QPushButton("Sfoglia...")
-        btn_browse_out.setObjectName("browse")
-        btn_browse_out.clicked.connect(self.browse_output)
-        out_layout.addWidget(self.out_edit)
-        out_layout.addWidget(btn_browse_out)
+        self.out_edit.setPlaceholderText("Lascia vuoto per creare sottocartella 'nobg_output'...")
+        
+        btn_out = QPushButton("Sfoglia...")
+        btn_out.setStyleSheet("background-color: #2196F3; color: white;")
+        btn_out.clicked.connect(self.browse_output)
+        
+        btn_auto = QPushButton("🔄 Auto")
+        btn_auto.setToolTip("Genera automaticamente vicino all'input")
+        btn_auto.clicked.connect(self.auto_output)
+        
+        out_layout.addWidget(self.out_edit, stretch=1)
+        out_layout.addWidget(btn_out)
+        out_layout.addWidget(btn_auto)
+        
         out_group.setLayout(out_layout)
         layout.addWidget(out_group)
         
-        # SETTINGS
-        settings = QHBoxLayout()
+        # =================================================================
+        # IMPOSTAZIONI
+        # =================================================================
+        settings_layout = QHBoxLayout()
         
         # Qualità
-        qual_box = QGroupBox("⚙️ Qualità")
+        qual_group = QGroupBox("⚙️ Qualità")
         qual_layout = QHBoxLayout()
         self.qual_spin = QSpinBox()
         self.qual_spin.setRange(10, 100)
         self.qual_spin.setValue(95)
         self.qual_spin.setSuffix("%")
-        self.qual_spin.setMinimumHeight(35)
+        self.qual_spin.setMinimumWidth(80)
         qual_layout.addWidget(self.qual_spin)
-        qual_box.setLayout(qual_layout)
-        settings.addWidget(qual_box)
+        qual_group.setLayout(qual_layout)
+        settings_layout.addWidget(qual_group)
         
         # Info
-        info_box = QGroupBox("ℹ️ Info")
+        info_group = QGroupBox("ℹ️ Stato")
         info_layout = QHBoxLayout()
-        self.info_label = QLabel("Nessuna immagine caricata")
-        info_layout.addWidget(self.info_label)
-        info_box.setLayout(info_layout)
-        settings.addWidget(info_box, stretch=1)
+        self.status_label = QLabel("Pronto - carica immagini")
+        self.status_label.setStyleSheet("color: #666;")
+        info_layout.addWidget(self.status_label)
+        info_group.setLayout(info_layout)
+        settings_layout.addWidget(info_group, stretch=1)
         
-        layout.addLayout(settings)
+        layout.addLayout(settings_layout)
         
-        # FILE LIST (drop area)
-        self.list_widget = QListWidget()
-        self.list_widget.setAcceptDrops(True)
-        self.list_widget.setMinimumHeight(150)
-        self.list_widget.setMaximumHeight(200)
-        self.list_widget.setAlternatingRowColors(True)
-        self.list_widget.dragEnterEvent = self.drag_enter
-        self.list_widget.dragMoveEvent = self.drag_move
-        self.list_widget.dropEvent = self.drop
-        self.list_widget.setStyleSheet("""
-            QListWidget { 
-                border: 2px dashed #4CAF50; 
-                border-radius: 8px;
-                background-color: #fafafa;
-            }
-            QListWidget::item { padding: 5px; }
-            QListWidget::item:alternate { background-color: #f0f0f0; }
-        """)
-        layout.addWidget(QLabel("📋 File caricati (trascina immagini o cartelle qui):"))
-        layout.addWidget(self.list_widget)
-        
-        # PROGRESS
+        # =================================================================
+        # PROGRESSO
+        # =================================================================
         self.progress = QProgressBar()
         self.progress.setTextVisible(True)
-        self.progress.setFormat("%p% - %v/%m file")
+        self.progress.setFormat("Pronto")
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #4CAF50;
+                border-radius: 6px;
+                text-align: center;
+                height: 30px;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 4px;
+            }
+        """)
         layout.addWidget(self.progress)
         
-        # LOG AREA
+        # =================================================================
+        # LOG
+        # =================================================================
         log_group = QGroupBox("📜 Log operazioni")
         log_layout = QVBoxLayout()
+        
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(180)
-        self.log_text.setPlaceholderText("Qui appariranno i messaggi di log...")
+        self.log_text.setMaximumHeight(150)
+        self.log_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                font-family: 'Consolas', monospace;
+                font-size: 10px;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        
         log_layout.addWidget(self.log_text)
         log_group.setLayout(log_layout)
         layout.addWidget(log_group)
         
-        # BUTTONS
+        # =================================================================
+        # BOTTONI PRINCIPALI
+        # =================================================================
         btn_layout = QHBoxLayout()
         
         self.start_btn = QPushButton("▶️ AVVIA ELABORAZIONE")
-        self.start_btn.setObjectName("start")
-        self.start_btn.setMinimumHeight(50)
+        self.start_btn.setMinimumHeight(55)
         self.start_btn.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 8px;
+            }
+            QPushButton:hover { background-color: #45a049; }
+            QPushButton:disabled { background-color: #cccccc; }
+        """)
         self.start_btn.clicked.connect(self.start_processing)
         
-        btn_clear = QPushButton("🗑️ PULISCI")
-        btn_clear.setObjectName("clear")
-        btn_clear.setMinimumHeight(50)
-        btn_clear.clicked.connect(self.clear_all)
+        btn_open_log = QPushButton("📁 Apri Log")
+        btn_open_log.setMinimumHeight(55)
+        btn_open_log.setStyleSheet("background-color: #FF9800; color: white;")
+        btn_open_log.clicked.connect(self.open_log)
         
-        btn_log = QPushButton("📁 APRI LOG")
-        btn_log.setObjectName("log")
-        btn_log.setMinimumHeight(50)
-        btn_log.clicked.connect(self.open_log)
+        btn_help = QPushButton("❓ Aiuto")
+        btn_help.setMinimumHeight(55)
+        btn_help.setStyleSheet("background-color: #9C27B0; color: white;")
+        btn_help.clicked.connect(self.show_help)
         
-        btn_layout.addWidget(self.start_btn)
-        btn_layout.addWidget(btn_clear)
-        btn_layout.addWidget(btn_log)
+        btn_layout.addWidget(self.start_btn, stretch=2)
+        btn_layout.addWidget(btn_open_log)
+        btn_layout.addWidget(btn_help)
         layout.addLayout(btn_layout)
         
-        # FOOTER
-        footer = QLabel("💡 Trascina una cartella nell'area sopra o clicca 'Sfoglia' per iniziare")
+        # Footer
+        footer = QLabel(
+            "💡 Trascina file/cartelle nell'area sopra | "
+            "Tasto destro sulla lista per opzioni | "
+            f"Log: {logger.get_log_path()}"
+        )
         footer.setAlignment(Qt.AlignCenter)
-        footer.setStyleSheet("color: #666; font-size: 11px;")
+        footer.setStyleSheet("color: #888; font-size: 10px; margin-top: 5px;")
         layout.addWidget(footer)
         
+    # =================================================================
+    # METODI DRAG & DROP
+    # =================================================================
     def drag_enter(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             self.list_widget.setStyleSheet("""
-                QListWidget { 
-                    border: 2px dashed #2196F3; 
-                    background-color: #e3f2fd;
+                QListWidget {
+                    border: 3px dashed #4CAF50;
+                    background-color: #e8f5e9;
                 }
             """)
     
@@ -328,130 +406,329 @@ class MainWindow(QMainWindow):
         event.acceptProposedAction()
     
     def drop(self, event):
+        # Ripristina stile
         self.list_widget.setStyleSheet("""
-            QListWidget { 
-                border: 2px dashed #4CAF50; 
+            QListWidget {
+                border: 2px solid #ddd;
                 border-radius: 8px;
                 background-color: #fafafa;
+                alternate-background-color: #f0f0f0;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #eee;
+            }
+            QListWidget::item:selected {
+                background-color: #4CAF50;
+                color: white;
             }
         """)
         
-        paths = []
+        added = 0
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if os.path.isdir(path):
-                self.in_edit.setText(path)
-                self.scan_folder(path)
-                return
-            elif path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')):
-                paths.append(path)
+                added += self.add_folder_files(path)
+            elif self.is_image_file(path):
+                self.add_single_file(path)
+                added += 1
         
-        if paths:
-            self.add_files(paths)
+        self.update_list_display()
+        self.log(f"📥 Aggiunti {added} file da drag & drop")
     
-    def browse_input(self):
-        folder = QFileDialog.getExistingDirectory(self, "Seleziona cartella immagini")
+    # =================================================================
+    # METODI GESTIONE FILE
+    # =================================================================
+    def is_image_file(self, path):
+        """Verifica se file è immagine supportata"""
+        ext = os.path.splitext(path)[1].lower()
+        return ext in SUPPORTED_FORMATS and os.path.isfile(path)
+    
+    def browse_folder(self):
+        """Seleziona cartella e carica tutte le immagini"""
+        folder = QFileDialog.getExistingDirectory(
+            self, 
+            "Seleziona cartella con immagini",
+            "",
+            QFileDialog.ShowDirsOnly
+        )
         if folder:
-            self.in_edit.setText(folder)
-            self.scan_folder(folder)
+            count = self.add_folder_files(folder)
+            if count > 0:
+                self.in_edit.setText(f"📁 {folder[:50]}...")
+                self.auto_output()
+            else:
+                QMessageBox.information(
+                    self,
+                    "Nessuna immagine",
+                    f"Nessuna immagine trovata in:\n{folder}\n\n"
+                    f"Formati cercati: {', '.join(SUPPORTED_FORMATS[:5])}..."
+                )
     
-    def scan_folder(self, folder):
-        self.files_list.clear()
+    def browse_files(self):
+        """Seleziona singoli file"""
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Seleziona immagini",
+            "",
+            f"Immagini ({' '.join(SUPPORTED_FORMATS)});;Tutti i file (*.*)"
+        )
+        if files:
+            added = 0
+            for f in files:
+                if self.is_image_file(f):
+                    self.add_single_file(f)
+                    added += 1
+            
+            self.update_list_display()
+            self.log(f"📎 Aggiunti {added} file singoli")
+            
+            if self.files_list and not self.out_edit.text():
+                self.auto_output()
+    
+    def add_folder_files(self, folder):
+        """Aggiunge tutte le immagini da una cartella"""
+        count = 0
+        try:
+            for entry in os.scandir(folder):
+                if entry.is_file() and self.is_image_file(entry.path):
+                    if entry.path not in self.files_list:
+                        self.files_list.append(entry.path)
+                        count += 1
+        except Exception as e:
+            self.show_error("Errore lettura cartella", str(e))
+            return 0
+        
+        self.update_list_display()
+        self.log(f"📂 Cartella: {folder}")
+        self.log(f"   Trovate: {count} immagini")
+        return count
+    
+    def add_single_file(self, path):
+        """Aggiunge singolo file"""
+        if path not in self.files_list and self.is_image_file(path):
+            self.files_list.append(path)
+            return True
+        return False
+    
+    def update_list_display(self):
+        """Aggiorna la lista visiva"""
         self.list_widget.clear()
         
-        extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
-        count = 0
+        for i, path in enumerate(self.files_list, 1):
+            filename = os.path.basename(path)
+            item = QListWidgetItem(f"{i:3d}. 📄 {filename}")
+            item.setToolTip(path)  # Tooltip con path completo
+            item.setData(Qt.UserRole, path)  # Salva path nei dati
+            self.list_widget.addItem(item)
         
-        try:
-            for f in os.listdir(folder):
-                if f.lower().endswith(extensions):
-                    path = os.path.join(folder, f)
-                    self.files_list.append(path)
-                    self.list_widget.addItem(f"📄 {f}")
-                    count += 1
-        except Exception as e:
-            self.show_error("Errore scansione", f"Impossibile leggere cartella:\n{str(e)}")
+        # Aggiorna contatori
+        count = len(self.files_list)
+        self.list_group.setTitle(f"📋 File caricati ({count})")
+        self.status_label.setText(f"{count} file pronti")
+        self.update_selection_count()
+        
+        # Abilita/disabilita start
+        self.start_btn.setEnabled(count > 0)
+    
+    def update_selection_count(self):
+        """Aggiorna conteggio selezionati"""
+        selected = len(self.list_widget.selectedItems())
+        self.list_count_label.setText(f"{selected}/{len(self.files_list)} selezionati")
+    
+    def remove_selected(self):
+        """Rimuove file selezionati dalla lista"""
+        selected = self.list_widget.selectedItems()
+        if not selected:
             return
         
-        self.info_label.setText(f"{count} immagini trovate")
-        self.log(f"📂 Scansionata: {folder}")
-        self.log(f"   Trovate: {count} immagini")
+        # Rimuovi dalla lista dati
+        for item in selected:
+            path = item.data(Qt.UserRole)
+            if path in self.files_list:
+                self.files_list.remove(path)
         
-        if count == 0:
-            self.show_warning("Nessuna immagine", 
-                "Nessuna immagine trovata nella cartella.\n"
-                "Formati supportati: PNG, JPG, JPEG, BMP, TIFF, WEBP")
+        self.update_list_display()
+        self.log(f"🗑️ Rimossi {len(selected)} file")
     
-    def add_files(self, paths):
-        for p in paths:
-            if p not in self.files_list:
-                self.files_list.append(p)
-                self.list_widget.addItem(f"📄 {os.path.basename(p)}")
+    def clear_files(self):
+        """Pulisce tutta la lista"""
+        self.files_list.clear()
+        self.update_list_display()
+        self.in_edit.clear()
+        self.log("🗑️ Lista pulita")
+    
+    def preview_selected(self):
+        """Mostra anteprima immagine selezionata"""
+        selected = self.list_widget.selectedItems()
+        if not selected:
+            QMessageBox.information(self, "Anteprima", "Seleziona un'immagine dalla lista")
+            return
         
-        self.info_label.setText(f"{len(self.files_list)} immagini totali")
-        self.log(f"📎 Aggiunti {len(paths)} file")
+        # Prendi il primo selezionato
+        path = selected[0].data(Qt.UserRole)
+        
+        # Crea dialog anteprima
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Anteprima: {os.path.basename(path)}")
+        dialog.setMinimumSize(800, 600)
+        
+        layout = QVBoxLayout(dialog)
+        
+        label = QLabel()
+        pixmap = QPixmap(path)
+        
+        # Scala se troppo grande
+        if pixmap.width() > 780 or pixmap.height() > 580:
+            pixmap = pixmap.scaled(780, 580, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        
+        label.setPixmap(pixmap)
+        label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(label)
+        
+        info = QLabel(f"Dimensioni: {pixmap.width()}x{pixmap.height()} | Path: {path[:80]}...")
+        info.setAlignment(Qt.AlignCenter)
+        info.setStyleSheet("color: #666; font-size: 10px;")
+        layout.addWidget(info)
+        
+        dialog.exec_()
     
+    def show_context_menu(self, position):
+        """Menu contestuale sulla lista"""
+        menu = QMenu()
+        
+        remove_action = QAction("❌ Rimuovi", self)
+        remove_action.triggered.connect(self.remove_selected)
+        menu.addAction(remove_action)
+        
+        preview_action = QAction("👁️ Anteprima", self)
+        preview_action.triggered.connect(self.preview_selected)
+        menu.addAction(preview_action)
+        
+        menu.addSeparator()
+        
+        show_path_action = QAction("📋 Copia path", self)
+        show_path_action.triggered.connect(self.copy_selected_path)
+        menu.addAction(show_path_action)
+        
+        menu.exec_(self.list_widget.mapToGlobal(position))
+    
+    def copy_selected_path(self):
+        """Copia path negli appunti"""
+        selected = self.list_widget.selectedItems()
+        if selected:
+            path = selected[0].data(Qt.UserRole)
+            clipboard = QApplication.clipboard()
+            clipboard.setText(path)
+            self.statusBar().showMessage(f"Path copiato: {path[:50]}...", 3000)
+    
+    # =================================================================
+    # GESTIONE OUTPUT
+    # =================================================================
     def browse_output(self):
+        """Seleziona cartella output"""
         folder = QFileDialog.getExistingDirectory(self, "Seleziona cartella output")
         if folder:
+            # FIX CRITICO: Normalizza path Windows
+            folder = os.path.normpath(folder)
             self.out_edit.setText(folder)
+            self.log(f"💾 Output manuale: {folder}")
     
-    def log(self, msg):
-        """Aggiunge log alla UI"""
-        self.log_text.append(msg)
-        # Auto-scroll
-        scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-        # Anche su file logger
-        logger.info(msg.replace("📂 ", "").replace("📎 ", "").replace("🔄 ", "")
-                   .replace("✅ ", "").replace("❌ ", "").replace("📜 ", ""))
-    
-    def start_processing(self):
+    def auto_output(self):
+        """Genera output automatico vicino all'input"""
         if not self.files_list:
-            self.show_warning("Nessuna immagine", 
-                "Carica prima delle immagini!\n\n"
-                "Trascina una cartella o clicca 'Sfoglia'")
+            return
+        
+        # Prendi cartella del primo file
+        first_file = self.files_list[0]
+        input_dir = os.path.dirname(first_file)
+        
+        # Crea nome univoco
+        base_output = os.path.join(input_dir, "nobg_output")
+        output_dir = base_output
+        counter = 1
+        
+        while os.path.exists(output_dir) and os.listdir(output_dir):
+            output_dir = f"{base_output}_{counter}"
+            counter += 1
+        
+        # FIX: Normalizza path
+        output_dir = os.path.normpath(output_dir)
+        self.out_edit.setText(output_dir)
+        self.log(f"🔄 Output auto: {output_dir}")
+    
+    # =================================================================
+    # ELABORAZIONE
+    # =================================================================
+    def start_processing(self):
+        """Avvia elaborazione"""
+        if not self.files_list:
+            self.show_warning("Nessun file", "Carica almeno un'immagine!")
             return
         
         # Determina output
         output = self.out_edit.text().strip()
         if not output:
-            input_dir = self.in_edit.text().strip()
-            if input_dir:
-                output = os.path.join(input_dir, "nobg_output")
-            else:
-                self.show_error("Errore", "Specificare cartella output o input")
-                return
+            self.auto_output()
+            output = self.out_edit.text()
         
-        # Verifica/crea output
+        # FIX CRITICO: Prepara cartella output con path assoluto normalizzato
         try:
+            # Converte in path assoluto e normalizza
+            output = os.path.abspath(output)
+            output = os.path.normpath(output)
+            
+            logger.info(f"Preparazione output: {output}")
+            
+            # Crea cartella con exist_ok
             os.makedirs(output, exist_ok=True)
+            
+            # Verifica esistenza
+            if not os.path.exists(output):
+                raise RuntimeError(f"os.makedirs non ha creato la cartella: {output}")
+            
+            # Verifica scrivibilità
             test_file = os.path.join(output, ".write_test")
             with open(test_file, 'w') as f:
                 f.write("test")
             os.remove(test_file)
+            
+            logger.success(f"Cartella output verificata: {output}")
+            
         except Exception as e:
-            self.show_error("Errore cartella", 
-                f"Impossibile scrivere nella cartella output:\n{output}\n\n{str(e)}")
+            logger.error("Errore preparazione output", e)
+            self.show_error(
+                "Errore cartella output",
+                f"Impossibile preparare la cartella:\n\n{output}\n\n"
+                f"Errore: {str(e)}\n\n"
+                f"Prova a:\n"
+                f"1. Scegliere un'altra cartella (Sfoglia...)\n"
+                f"2. Verificare i permessi di scrittura\n"
+                f"3. Usare il Desktop o Documenti"
+            )
             return
         
+        # Salva path finale
         self.out_edit.setText(output)
         
-        # UI ready
+        # UI elaborazione
         self.start_btn.setEnabled(False)
         self.start_btn.setText("⏳ ELABORAZIONE IN CORSO...")
         self.progress.setMaximum(len(self.files_list))
         self.progress.setValue(0)
+        self.progress.setFormat("%p% - %v/%m file")
+        
         self.log_text.clear()
+        self.log("=" * 60)
+        self.log("🚀 AVVIO ELABORAZIONE")
+        self.log(f"📊 File: {len(self.files_list)}")
+        self.log(f"💾 Output: {output}")
+        self.log(f"⚙️ Qualità: {self.qual_spin.value()}%")
+        self.log("=" * 60)
         
-        self.log("=" * 50)
-        self.log("🚀 AVVIO ELABORAZIONE BATCH")
-        self.log(f"   File: {len(self.files_list)}")
-        self.log(f"   Output: {output}")
-        self.log(f"   Qualità: {self.qual_spin.value()}%")
-        self.log("=" * 50)
-        
-        # Ferma thread precedente se esiste
+        # Ferma worker precedente
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(1000)
@@ -463,166 +740,160 @@ class MainWindow(QMainWindow):
             self.qual_spin.value()
         )
         
-        # Connetti segnali (thread-safe)
-        self.worker.log_signal.connect(self.on_worker_log)
-        self.worker.progress_signal.connect(self.on_worker_progress)
-        self.worker.finished_signal.connect(self.on_worker_finished)
-        self.worker.error_signal.connect(self.on_worker_error)
+        self.worker.log_signal.connect(self.on_log)
+        self.worker.progress_signal.connect(self.on_progress)
+        self.worker.finished_signal.connect(self.on_finished)
+        self.worker.error_signal.connect(self.on_error)
         
         self.worker.start()
     
-    def on_worker_log(self, msg):
-        """Riceve log dal worker (thread-safe)"""
+    def on_log(self, msg):
+        """Riceve log dal worker"""
         if QThread.currentThread() != self.thread():
-            QMetaObject.invokeMethod(self, "log", 
-                Qt.QueuedConnection, 
-                Q_ARG(str, msg))
+            QMetaObject.invokeMethod(self, "log", Qt.QueuedConnection, Q_ARG(str, msg))
         else:
             self.log(msg)
     
-    def on_worker_progress(self, current, total, filename):
-        """Aggiorna progresso (thread-safe)"""
-        def update():
-            self.progress.setValue(current)
-            self.progress.setFormat(f"%p% - {current}/{total} - {filename[:30]}")
-            self.statusBar().showMessage(f"Elaborazione: {filename}")
-        
-        if QThread.currentThread() != self.thread():
-            QMetaObject.invokeMethod(self, "progress_callback", 
-                Qt.QueuedConnection,
-                Q_ARG(int, current),
-                Q_ARG(int, total),
-                Q_ARG(str, filename))
-        else:
-            update()
+    def log(self, msg):
+        """Aggiunge a log UI"""
+        self.log_text.append(msg)
+        scrollbar = self.log_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        # Log anche su file
+        clean_msg = msg.replace("🔄 ", "").replace("✅ ", "").replace("❌ ", "")
+        logger.info(clean_msg)
     
-    def progress_callback(self, current, total, filename):
+    def on_progress(self, current, total, filename):
+        """Aggiorna progresso"""
         self.progress.setValue(current)
-        self.progress.setFormat(f"%p% - {current}/{total}")
-        self.statusBar().showMessage(f"Elaborazione: {filename[:50]}")
+        self.progress.setFormat(f"%p% - {current}/{total} - {filename[:25]}")
+        self.status_label.setText(f"Elaborazione: {current}/{total}")
     
-    def on_worker_finished(self, stats):
+    def on_finished(self, stats):
         """Elaborazione terminata"""
         self.start_btn.setEnabled(True)
         self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
         
         if stats.get('error'):
-            self.show_error("Errore Elaborazione", 
-                f"Si è verificato un errore:\n{stats.get('message', 'Unknown')}")
+            self.show_error("Errore", stats.get('message', 'Errore sconosciuto'))
             return
         
         if stats.get('interrupted'):
-            self.show_warning("Interrotto", "Elaborazione interrotta dall'utente")
+            self.show_warning("Interrotto", "Elaborazione fermata dall'utente")
             return
         
-        # Successo
         success = stats.get('success', 0)
         total = stats.get('total', 0)
         failed = stats.get('failed', 0)
         
         self.progress.setValue(total)
-        self.statusBar().showMessage(f"Completato: {success}/{total}")
         
         if failed == 0:
-            self.show_success("Completato!", 
-                f"✅ Tutte le immagini elaborate con successo!\n\n"
-                f"Totali: {total}\n"
-                f"Successo: {success}\n"
-                f"Output: {self.out_edit.text()}")
+            self.show_success(
+                "Completato! 🎉",
+                f"Tutte le immagini elaborate con successo!\n\n"
+                f"✅ Successo: {success}/{total}\n"
+                f"📁 Salvate in:\n{self.out_edit.text()}"
+            )
         else:
-            # Mostra errori specifici
-            errors = stats.get('errors', [])
-            error_text = "\n".join([f"• {e['file']}: {e['error'][:50]}" for e in errors[:5]])
-            if len(errors) > 5:
-                error_text += f"\n... e altri {len(errors)-5} errori"
+            errors = stats.get('errors', [])[:5]
+            err_text = "\n".join([f"• {e['file']}: {e['error'][:40]}" for e in errors])
             
-            reply = QMessageBox.question(self, "Completato con errori",
-                f"⚠️ Elaborazione parziale:\n\n"
-                f"Successo: {success}/{total}\n"
-                f"Falliti: {failed}\n\n"
-                f"Errori:\n{error_text}\n\n"
-                f"Vuoi aprire il file di log per i dettagli completi?",
-                QMessageBox.Yes | QMessageBox.No)
+            reply = QMessageBox.question(
+                self,
+                f"Completato con {failed} errori",
+                f"Risultato:\n"
+                f"✅ Successo: {success}\n"
+                f"❌ Falliti: {failed}\n\n"
+                f"Errori:\n{err_text}\n\n"
+                f"Vuoi aprire il log completo?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
             
             if reply == QMessageBox.Yes:
                 self.open_log()
     
-    def on_worker_error(self, title, message):
-        """Errore critico dal worker"""
+    def on_error(self, title, message):
+        """Errore dal worker"""
         self.start_btn.setEnabled(True)
         self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
         self.show_error(title, message)
     
-    def clear_all(self):
-        """Pulisce tutto"""
-        self.files_list.clear()
-        self.list_widget.clear()
-        self.log_text.clear()
-        self.in_edit.clear()
-        self.out_edit.clear()
-        self.progress.setValue(0)
-        self.info_label.setText("Nessuna immagine caricata")
-        self.statusBar().showMessage("Pronto")
-        
-        if self.worker and self.worker.isRunning():
-            self.worker.stop()
-        
-        logger.info("Pulizia interfaccia")
-    
+    # =================================================================
+    # UTILITY
+    # =================================================================
     def open_log(self):
-        """Apre cartella log"""
+        """Apre file log"""
         log_path = logger.get_log_path()
-        log_dir = os.path.dirname(log_path)
-        
         if os.path.exists(log_path):
-            # Apri file con notepad
             os.system(f'notepad "{log_path}"')
         else:
-            # Apri cartella
-            os.startfile(log_dir) if os.path.exists(log_dir) else self.show_error(
-                "Log non trovato", f"Impossibile trovare: {log_dir}")
+            self.show_error("Log non trovato", log_path)
     
-    def show_error(self, title, message):
-        QMessageBox.critical(self, f"❌ {title}", message)
-        logger.error(f"POPUP ERRORE: {title} - {message}")
+    def show_help(self):
+        """Mostra aiuto"""
+        QMessageBox.information(
+            self,
+            "Aiuto",
+            "📖 GUIDA RAPIDA\n\n"
+            "1. CARICA IMMAGINI:\n"
+            "   • 📁 Cartella: carica TUTTE le immagini\n"
+            "   • 📄 File: seleziona singole immagini\n"
+            "   • Drag & drop: trascina file/cartelle\n\n"
+            "2. GESTISCI LISTA:\n"
+            "   • Tasto destro: menu contestuale\n"
+            "   • Seleziona multipli: Ctrl+Click o Shift+Click\n"
+            "   • 👁️ Anteprima: vedi immagine prima\n\n"
+            "3. OUTPUT:\n"
+            "   • 🔄 Auto: crea cartella vicino all'input\n"
+            "   • Sfoglia: scegli tu la destinazione\n\n"
+            "4. FORMATI SUPPORTATI:\n"
+            f"   {', '.join(SUPPORTED_FORMATS[:10])}\n"
+            f"   e altri {len(SUPPORTED_FORMATS)-10} formati...\n\n"
+            f"📁 Log salvato in:\n{logger.get_log_path()}"
+        )
     
-    def show_warning(self, title, message):
-        QMessageBox.warning(self, f"⚠️ {title}", message)
-        logger.warning(f"POPUP AVVISO: {title} - {message}")
+    def show_error(self, title, msg):
+        QMessageBox.critical(self, f"❌ {title}", msg)
+        logger.error(f"POPUP ERROR: {title} - {msg[:100]}")
     
-    def show_success(self, title, message):
-        QMessageBox.information(self, f"✅ {title}", message)
-        logger.success(f"POPUP SUCCESSO: {title} - {message}")
+    def show_warning(self, title, msg):
+        QMessageBox.warning(self, f"⚠️ {title}", msg)
+        logger.warning(f"POPUP WARN: {title} - {msg[:100]}")
+    
+    def show_success(self, title, msg):
+        QMessageBox.information(self, f"✅ {title}", msg)
+        logger.success(f"POPUP OK: {title}")
     
     def closeEvent(self, event):
-        """Chiusura applicazione"""
+        """Chiusura"""
         if self.worker and self.worker.isRunning():
-            reply = QMessageBox.question(self, "Conferma",
-                "Elaborazione in corso. Vuoi interrompere e uscire?",
-                QMessageBox.Yes | QMessageBox.No)
-            
-            if reply == QMessageBox.Yes:
-                self.worker.stop()
-                self.worker.wait(2000)
-            else:
+            reply = QMessageBox.question(
+                self,
+                "Conferma",
+                "Elaborazione in corso. Interrompere?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
                 event.ignore()
                 return
+            self.worker.stop()
+            self.worker.wait(2000)
         
         logger.close()
         event.accept()
 
 
 def main():
-    # Crea applicazione
     app = QApplication(sys.argv)
     app.setApplicationName("Background Remover Pro")
-    app.setApplicationVersion("3.0")
+    app.setStyle('Fusion')
     
-    # Font di sistema
+    # Font
     font = QFont("Segoe UI", 10)
     app.setFont(font)
     
-    # Crea finestra
     window = MainWindow()
     window.show()
     

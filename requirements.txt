@@ -1,23 +1,10 @@
-# Background Remover App - Requirements
-# Python 3.8+ richiesto
-
-# GUI
 PyQt5==5.15.10
-
-# Image Processing
+rembg==2.0.50
 Pillow==10.1.0
-
-# Background Removal (U2Net)
-rembg==2.0.52
-onnxruntime==1.16.3
-
-# Dipendenze necessarie
+onnxruntime-cpu==1.16.3
 numpy==1.24.3
 scipy==1.11.4
-pymatting==1.1.12
 scikit-image==0.22.0
-imageio==2.31.1
+imageio==2.33.0
 tqdm==4.66.1
-
-# Builder
-pyinstaller==6.3.0
+pymatting==1.1.12

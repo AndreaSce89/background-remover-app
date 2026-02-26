@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Background Remover Pro v3.1 - DEFINITIVO
-Fix: creazione cartella, formati immagine, selezione singola/multipla
+Background Remover Pro v3.2 - DEFINITIVO
+Fix: path con spazi, selezione file singola, azzeramento progresso
 """
 
 import sys
@@ -26,10 +26,10 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QListWidget,
     QProgressBar, QMessageBox, QSpinBox, QGroupBox, QTextEdit,
-    QListWidgetItem, QMenu, QAction, QAbstractItemView, QFileDialog.Options,
+    QListWidgetItem, QMenu, QAction, QAbstractItemView
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMetaObject, Q_ARG, QUrl
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QFont, QIcon, QPixmap
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMetaObject, Q_ARG
+from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QFont, QPixmap
 
 # Nascondi console
 if sys.platform == 'win32':
@@ -52,8 +52,6 @@ SUPPORTED_FORMATS = (
     '.pef', '.ptx', '.pxn', '.r3d', '.3fr',
     '.erf', '.mef', '.mos', '.qtk', '.rdc'
 )
-
-SUPPORTED_GLOB = ['*' + ext for ext in SUPPORTED_FORMATS]
 
 
 class WorkerThread(QThread):
@@ -112,16 +110,16 @@ class WorkerThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Background Remover Pro v3.1")
+        self.setWindowTitle("Background Remover Pro v3.2")
         self.setMinimumSize(1100, 850)
         
-        self.files_list = []  # Lista completa path
+        self.files_list = []
         self.worker = None
         
         self.setup_ui()
         
         logger.info("=" * 70)
-        logger.info("APPLICAZIONE AVVIATA v3.1")
+        logger.info("APPLICAZIONE AVVIATA v3.2")
         logger.info("=" * 70)
         
     def setup_ui(self):
@@ -165,7 +163,7 @@ class MainWindow(QMainWindow):
         btn_clear_in.setToolTip("Pulisci lista")
         btn_clear_in.setStyleSheet("background-color: #f44336; color: white;")
         btn_clear_in.setMaximumWidth(50)
-        btn_clear_in.clicked.connect(self.clear_files)
+        btn_clear_in.clicked.connect(self.clear_all)
         
         path_layout.addWidget(self.in_edit, stretch=1)
         path_layout.addWidget(btn_folder)
@@ -177,7 +175,7 @@ class MainWindow(QMainWindow):
         # Info formati supportati
         formats_label = QLabel(
             f"Formati supportati: {', '.join(SUPPORTED_FORMATS[:8])}... "
-            f"(e altri {len(SUPPORTED_FORMATS)-8} formati RAW/HEIF)"
+            f"(e altri {len(SUPPORTED_FORMATS)-8} formati)"
         )
         formats_label.setStyleSheet("color: #666; font-size: 10px;")
         formats_label.setWordWrap(True)
@@ -187,7 +185,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(in_group)
         
         # =================================================================
-        # LISTA FILE CON ICONE E PREVIEW
+        # LISTA FILE
         # =================================================================
         list_group = QGroupBox(f"📋 File caricati (0)")
         list_layout = QVBoxLayout()
@@ -199,7 +197,6 @@ class MainWindow(QMainWindow):
         self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self.show_context_menu)
         
-        # Stile lista
         self.list_widget.setStyleSheet("""
             QListWidget {
                 border: 2px solid #ddd;
@@ -245,7 +242,7 @@ class MainWindow(QMainWindow):
         
         list_layout.addLayout(list_btn_layout)
         list_group.setLayout(list_layout)
-        self.list_group = list_group  # Riferimento per aggiornare titolo
+        self.list_group = list_group
         layout.addWidget(list_group)
         
         # =================================================================
@@ -316,7 +313,6 @@ class MainWindow(QMainWindow):
             }
             QProgressBar::chunk {
                 background-color: #4CAF50;
-                border-radius: 4px;
             }
         """)
         layout.addWidget(self.progress)
@@ -380,50 +376,22 @@ class MainWindow(QMainWindow):
         layout.addLayout(btn_layout)
         
         # Footer
-        footer = QLabel(
-            "💡 Trascina file/cartelle nell'area sopra | "
-            "Tasto destro sulla lista per opzioni | "
-            f"Log: {logger.get_log_path()}"
-        )
+        footer = QLabel(f"💡 Log: {logger.get_log_path()}")
         footer.setAlignment(Qt.AlignCenter)
         footer.setStyleSheet("color: #888; font-size: 10px; margin-top: 5px;")
         layout.addWidget(footer)
         
     # =================================================================
-    # METODI DRAG & DROP
+    # DRAG & DROP
     # =================================================================
     def drag_enter(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.list_widget.setStyleSheet("""
-                QListWidget {
-                    border: 3px dashed #4CAF50;
-                    background-color: #e8f5e9;
-                }
-            """)
     
     def drag_move(self, event):
         event.acceptProposedAction()
     
     def drop(self, event):
-        # Ripristina stile
-        self.list_widget.setStyleSheet("""
-            QListWidget {
-                border: 2px solid #ddd;
-                border-radius: 8px;
-                background-color: #fafafa;
-                alternate-background-color: #f0f0f0;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #eee;
-            }
-            QListWidget::item:selected {
-                background-color: #4CAF50;
-                color: white;
-            }
-        """)
-        
         added = 0
         for url in event.mimeData().urls():
             path = url.toLocalFile()
@@ -437,7 +405,7 @@ class MainWindow(QMainWindow):
         self.log(f"📥 Aggiunti {added} file da drag & drop")
     
     # =================================================================
-    # METODI GESTIONE FILE
+    # GESTIONE FILE
     # =================================================================
     def is_image_file(self, path):
         """Verifica se file è immagine supportata"""
@@ -448,11 +416,11 @@ class MainWindow(QMainWindow):
         """Seleziona cartella e carica tutte le immagini"""
         folder = QFileDialog.getExistingDirectory(
             self, 
-            "Seleziona cartella con immagini",
-            "",
-            QFileDialog.ShowDirsOnly
+            "Seleziona cartella con immagini"
         )
         if folder:
+            # FIX: Normalizza path
+            folder = os.path.normpath(folder)
             count = self.add_folder_files(folder)
             if count > 0:
                 self.in_edit.setText(f"📁 {folder[:50]}...")
@@ -461,29 +429,25 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(
                     self,
                     "Nessuna immagine",
-                    f"Nessuna immagine trovata in:\n{folder}\n\n"
-                    f"Formati cercati: {', '.join(SUPPORTED_FORMATS[:5])}..."
+                    f"Nessuna immagine trovata in:\n{folder}"
                 )
     
-        def browse_files(self):
+    def browse_files(self):
         """Seleziona singoli file - VERSIONE CORRETTA"""
-        # FIX: Filtro file corretto per Windows
-        # Crea pattern tipo: "Immagini (*.png *.jpg *.jpeg ...)"
-        extensions = ' '.join([f'*{ext}' for ext in SUPPORTED_FORMATS[:15]])
-        filter_str = f"Immagini ({extensions});;Tutti i file (*.*)"
+        # FIX: Filtro corretto senza Options
+        filter_str = "Immagini (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.webp);;Tutti i file (*.*)"
         
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Seleziona immagini",
-            "",  # Cartella default (vuoto = ultima usata o Documenti)
-            filter_str,
-            options=QFileDialog.Options()  # FIX: Opzioni di default
+            "",
+            filter_str
         )
         
         if files:
             added = 0
             for f in files:
-                # FIX: Normalizza path ricevuto da dialog
+                # FIX: Normalizza path
                 f = os.path.normpath(f)
                 if self.is_image_file(f):
                     if f not in self.files_list:
@@ -493,7 +457,6 @@ class MainWindow(QMainWindow):
             self.update_list_display()
             self.log(f"📎 Aggiunti {added} file singoli")
             
-            # Suggerisci output automatico
             if self.files_list and not self.out_edit.text():
                 self.auto_output()
     
@@ -529,17 +492,14 @@ class MainWindow(QMainWindow):
         for i, path in enumerate(self.files_list, 1):
             filename = os.path.basename(path)
             item = QListWidgetItem(f"{i:3d}. 📄 {filename}")
-            item.setToolTip(path)  # Tooltip con path completo
-            item.setData(Qt.UserRole, path)  # Salva path nei dati
+            item.setToolTip(path)
+            item.setData(Qt.UserRole, path)
             self.list_widget.addItem(item)
         
-        # Aggiorna contatori
         count = len(self.files_list)
         self.list_group.setTitle(f"📋 File caricati ({count})")
         self.status_label.setText(f"{count} file pronti")
         self.update_selection_count()
-        
-        # Abilita/disabilita start
         self.start_btn.setEnabled(count > 0)
     
     def update_selection_count(self):
@@ -553,7 +513,6 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         
-        # Rimuovi dalla lista dati
         for item in selected:
             path = item.data(Qt.UserRole)
             if path in self.files_list:
@@ -562,72 +521,49 @@ class MainWindow(QMainWindow):
         self.update_list_display()
         self.log(f"🗑️ Rimossi {len(selected)} file")
     
-      def clear_all(self):
-        """Pulisce tutto - VERSIONE CORRETTA"""
-        # Azzera lista
+    def clear_all(self):
+        """Pulisce tutto - VERSIONE CORRETTA CON AZZERAMENTO PROGRESSO"""
         self.files_list.clear()
         self.list_widget.clear()
         self.log_text.clear()
         self.in_edit.clear()
         self.out_edit.clear()
         
-        # =================================================================
         # FIX: Azzeramento completo progress bar
-        # =================================================================
         self.progress.setValue(0)
-        self.progress.setMaximum(100)  # Reset maximum
-        self.progress.setFormat("Pronto")  # Testo default
-        self.progress.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #4CAF50;
-                border-radius: 6px;
-                text-align: center;
-                height: 30px;
-                font-weight: bold;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;  /* Verde normale */
-            }
-        """)
+        self.progress.setMaximum(100)
+        self.progress.setFormat("Pronto")
         
-        # Reset stato
         self.status_label.setText("Pronto - carica immagini")
         self.start_btn.setEnabled(False)
         self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
+        self.list_group.setTitle("📋 File caricati (0)")
+        self.list_count_label.setText("0 file selezionati")
         
-        # Ferma worker se attivo
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(1000)
         
-        # Aggiorna contatore lista
-        self.update_list_display()
-        
-        logger.info("Pulizia completa interfaccia")
+        logger.info("Pulizia completa")
     
     def preview_selected(self):
         """Mostra anteprima immagine selezionata"""
         selected = self.list_widget.selectedItems()
         if not selected:
-            QMessageBox.information(self, "Anteprima", "Seleziona un'immagine dalla lista")
+            QMessageBox.information(self, "Anteprima", "Seleziona un'immagine")
             return
         
-        # Prendi il primo selezionato
         path = selected[0].data(Qt.UserRole)
         
-        # Crea dialog anteprima
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
-        
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Anteprima: {os.path.basename(path)}")
         dialog.setMinimumSize(800, 600)
         
         layout = QVBoxLayout(dialog)
-        
         label = QLabel()
         pixmap = QPixmap(path)
         
-        # Scala se troppo grande
         if pixmap.width() > 780 or pixmap.height() > 580:
             pixmap = pixmap.scaled(780, 580, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         
@@ -635,9 +571,8 @@ class MainWindow(QMainWindow):
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
         
-        info = QLabel(f"Dimensioni: {pixmap.width()}x{pixmap.height()} | Path: {path[:80]}...")
+        info = QLabel(f"Dimensioni: {pixmap.width()}x{pixmap.height()}")
         info.setAlignment(Qt.AlignCenter)
-        info.setStyleSheet("color: #666; font-size: 10px;")
         layout.addWidget(info)
         
         dialog.exec_()
@@ -654,45 +589,27 @@ class MainWindow(QMainWindow):
         preview_action.triggered.connect(self.preview_selected)
         menu.addAction(preview_action)
         
-        menu.addSeparator()
-        
-        show_path_action = QAction("📋 Copia path", self)
-        show_path_action.triggered.connect(self.copy_selected_path)
-        menu.addAction(show_path_action)
-        
         menu.exec_(self.list_widget.mapToGlobal(position))
     
-    def copy_selected_path(self):
-        """Copia path negli appunti"""
-        selected = self.list_widget.selectedItems()
-        if selected:
-            path = selected[0].data(Qt.UserRole)
-            clipboard = QApplication.clipboard()
-            clipboard.setText(path)
-            self.statusBar().showMessage(f"Path copiato: {path[:50]}...", 3000)
-    
     # =================================================================
-    # GESTIONE OUTPUT
+    # OUTPUT
     # =================================================================
     def browse_output(self):
         """Seleziona cartella output"""
         folder = QFileDialog.getExistingDirectory(self, "Seleziona cartella output")
         if folder:
-            # FIX CRITICO: Normalizza path Windows
             folder = os.path.normpath(folder)
             self.out_edit.setText(folder)
             self.log(f"💾 Output manuale: {folder}")
     
     def auto_output(self):
-        """Genera output automatico vicino all'input"""
+        """Genera output automatico"""
         if not self.files_list:
             return
         
-        # Prendi cartella del primo file
         first_file = self.files_list[0]
         input_dir = os.path.dirname(first_file)
         
-        # Crea nome univoco
         base_output = os.path.join(input_dir, "nobg_output")
         output_dir = base_output
         counter = 1
@@ -701,117 +618,91 @@ class MainWindow(QMainWindow):
             output_dir = f"{base_output}_{counter}"
             counter += 1
         
-        # FIX: Normalizza path
         output_dir = os.path.normpath(output_dir)
         self.out_edit.setText(output_dir)
         self.log(f"🔄 Output auto: {output_dir}")
     
     # =================================================================
-    # ELABORAZIONE
+    # ELABORAZIONE - FIX PATH CON SPAZI
     # =================================================================
-        def start_processing(self):
-        """Avvia elaborazione - VERSIONE CORRETTA PER PATH COMPLESSI"""
+    def start_processing(self):
+        """Avvia elaborazione - FIX PER PATH CON SPAZI E PUNTI"""
         if not self.files_list:
             self.show_warning("Nessun file", "Carica almeno un'immagine!")
             return
         
-        # Determina output
         output = self.out_edit.text().strip()
         if not output:
             self.auto_output()
             output = self.out_edit.text()
         
-        # =================================================================
-        # FIX CRITICO: Gestione path con spazi, punti, caratteri speciali
-        # =================================================================
+        # FIX CRITICO: Gestione path complessi
         try:
-            # Rimuovi eventuali virgolette extra
+            # Pulisci virgolette extra
             output = output.strip('"').strip("'")
             
-            # Converte in path assoluto e normalizza SEPARATORI
+            # Converti in path assoluto e normalizza
             output = os.path.abspath(output)
             output = os.path.normpath(output)
             
-            # FIX: Gestisci path con spazi usando raw string equivalent
-            # Su Windows, assicurati che sia un path valido
+            # FIX Windows: rimuovi doppi backslash e trailing
             if sys.platform == 'win32':
-                # Rimuovi eventuali doppi backslash
-                output = output.replace('\\\\', '\\')
-                # Assicurati non finisca con backslash (causa problemi rari)
-                output = output.rstrip('\\')
+                output = output.replace('\\\\', '\\').rstrip('\\')
             
             logger.info(f"Preparazione output: '{output}'")
             
-            # Verifica path esiste e crea se necessario
-            # Usa os.makedirs con exist_ok e gestione errori specifica
+            # Crea cartella con gestione errori specifica
             try:
                 os.makedirs(output, exist_ok=True)
             except OSError as e:
-                # Se fallisce, prova con percorso alternativo (Desktop)
-                if e.winerror == 123:  # ERROR_INVALID_NAME
-                    desktop = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
-                    os.makedirs(desktop, exist_ok=True)
-                    output = desktop
-                    logger.warning(f"Path invalido, uso Desktop: {output}")
+                # Fallback su Desktop se path invalido
+                desktop = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
+                os.makedirs(desktop, exist_ok=True)
+                output = desktop
+                logger.warning(f"Fallback Desktop: {output}")
             
-            # Verifica effettiva esistenza
+            # Verifica esistenza
             if not os.path.exists(output):
-                raise RuntimeError(f"makedirs fallito per: {output}")
+                raise RuntimeError(f"Cartella non creata: {output}")
             
-            # Test scrittura con path quotato correttamente
-            test_file = os.path.join(output, "write_test.tmp")
-            try:
-                with open(test_file, 'w', encoding='utf-8') as f:
-                    f.write("test")
-                os.remove(test_file)
-            except PermissionError:
-                # Prova cartella utente se permessi negati
-                user_output = os.path.join(os.path.expanduser("~"), "Documents", "BG_Remover_Output")
-                os.makedirs(user_output, exist_ok=True)
-                output = user_output
-                logger.warning(f"Permessi negati, uso Documents: {output}")
+            # Test scrittura
+            test_file = os.path.join(output, "test.tmp")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
             
-            logger.success(f"Output verificato: {output}")
+            logger.success(f"Output OK: {output}")
             
         except Exception as e:
-            logger.error("Errore preparazione output", e)
+            logger.error("Errore output", e)
             
-            # Fallback ultima risorsa: Desktop
+            # Fallback ultima risorsa
             try:
                 fallback = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
                 os.makedirs(fallback, exist_ok=True)
                 output = fallback
-                logger.warning(f"Fallback su Desktop: {output}")
-            except Exception as fallback_e:
+                logger.warning(f"Fallback: {output}")
+            except:
                 self.show_error(
-                    "Errore cartella output",
-                    f"Impossibile creare cartella output.\n\n"
-                    f"Path tentato: {output}\n"
-                    f"Errore: {str(e)}\n\n"
-                    f"Prova a:\n"
-                    f"1. Scegliere Desktop come output\n"
-                    f"2. Verificare permessi cartella\n"
-                    f"3. Rimuovere caratteri speciali dal path"
+                    "Errore cartella",
+                    f"Impossibile creare cartella.\nErrore: {str(e)}"
                 )
                 return
         
-        # Salva path finale
         self.out_edit.setText(output)
         
         # UI elaborazione
         self.start_btn.setEnabled(False)
-        self.start_btn.setText("⏳ ELABORAZIONE IN CORSO...")
+        self.start_btn.setText("⏳ ELABORAZIONE...")
         self.progress.setMaximum(len(self.files_list))
         self.progress.setValue(0)
-        self.progress.setFormat("%p% - %v/%m file")
         
         self.log_text.clear()
-        self.log("=" * 60)
+        self.log("=" * 50)
         self.log("🚀 AVVIO ELABORAZIONE")
         self.log(f"📊 File: {len(self.files_list)}")
         self.log(f"💾 Output: {output}")
-        self.log(f"⚙️ Qualità: {self.qual_spin.value()}%")
-        self.log("=" * 60)
+        self.log("=" * 50)
         
         # Ferma worker precedente
         if self.worker and self.worker.isRunning():
@@ -844,14 +735,13 @@ class MainWindow(QMainWindow):
         self.log_text.append(msg)
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-        # Log anche su file
         clean_msg = msg.replace("🔄 ", "").replace("✅ ", "").replace("❌ ", "")
         logger.info(clean_msg)
     
     def on_progress(self, current, total, filename):
         """Aggiorna progresso"""
         self.progress.setValue(current)
-        self.progress.setFormat(f"%p% - {current}/{total} - {filename[:25]}")
+        self.progress.setFormat(f"%p% - {current}/{total}")
         self.status_label.setText(f"Elaborazione: {current}/{total}")
     
     def on_finished(self, stats):
@@ -864,7 +754,7 @@ class MainWindow(QMainWindow):
             return
         
         if stats.get('interrupted'):
-            self.show_warning("Interrotto", "Elaborazione fermata dall'utente")
+            self.show_warning("Interrotto", "Elaborazione fermata")
             return
         
         success = stats.get('success', 0)
@@ -876,28 +766,13 @@ class MainWindow(QMainWindow):
         if failed == 0:
             self.show_success(
                 "Completato! 🎉",
-                f"Tutte le immagini elaborate con successo!\n\n"
-                f"✅ Successo: {success}/{total}\n"
-                f"📁 Salvate in:\n{self.out_edit.text()}"
+                f"Successo: {success}/{total}\nOutput: {self.out_edit.text()}"
             )
         else:
-            errors = stats.get('errors', [])[:5]
-            err_text = "\n".join([f"• {e['file']}: {e['error'][:40]}" for e in errors])
-            
-            reply = QMessageBox.question(
-                self,
+            self.show_warning(
                 f"Completato con {failed} errori",
-                f"Risultato:\n"
-                f"✅ Successo: {success}\n"
-                f"❌ Falliti: {failed}\n\n"
-                f"Errori:\n{err_text}\n\n"
-                f"Vuoi aprire il log completo?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
+                f"Successo: {success}/{total}\nVedi log per dettagli"
             )
-            
-            if reply == QMessageBox.Yes:
-                self.open_log()
     
     def on_error(self, title, message):
         """Errore dal worker"""
@@ -921,43 +796,31 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Aiuto",
-            "📖 GUIDA RAPIDA\n\n"
-            "1. CARICA IMMAGINI:\n"
-            "   • 📁 Cartella: carica TUTTE le immagini\n"
-            "   • 📄 File: seleziona singole immagini\n"
-            "   • Drag & drop: trascina file/cartelle\n\n"
-            "2. GESTISCI LISTA:\n"
-            "   • Tasto destro: menu contestuale\n"
-            "   • Seleziona multipli: Ctrl+Click o Shift+Click\n"
-            "   • 👁️ Anteprima: vedi immagine prima\n\n"
-            "3. OUTPUT:\n"
-            "   • 🔄 Auto: crea cartella vicino all'input\n"
-            "   • Sfoglia: scegli tu la destinazione\n\n"
-            "4. FORMATI SUPPORTATI:\n"
-            f"   {', '.join(SUPPORTED_FORMATS[:10])}\n"
-            f"   e altri {len(SUPPORTED_FORMATS)-10} formati...\n\n"
-            f"📁 Log salvato in:\n{logger.get_log_path()}"
+            "📖 GUIDA\n\n"
+            "1. 📁 Cartella: carica TUTTE le immagini\n"
+            "2. 📄 File: seleziona singole immagini\n"
+            "3. 🗑️ Pulisci: azzera tutto (inclusa barra progresso)\n"
+            "4. 🔄 Auto: genera output automatico\n\n"
+            f"Formati: {', '.join(SUPPORTED_FORMATS[:6])}..."
         )
     
     def show_error(self, title, msg):
         QMessageBox.critical(self, f"❌ {title}", msg)
-        logger.error(f"POPUP ERROR: {title} - {msg[:100]}")
+        logger.error(f"ERROR: {title} - {msg[:100]}")
     
     def show_warning(self, title, msg):
         QMessageBox.warning(self, f"⚠️ {title}", msg)
-        logger.warning(f"POPUP WARN: {title} - {msg[:100]}")
+        logger.warning(f"WARN: {title} - {msg[:100]}")
     
     def show_success(self, title, msg):
         QMessageBox.information(self, f"✅ {title}", msg)
-        logger.success(f"POPUP OK: {title}")
+        logger.success(f"OK: {title}")
     
     def closeEvent(self, event):
         """Chiusura"""
         if self.worker and self.worker.isRunning():
             reply = QMessageBox.question(
-                self,
-                "Conferma",
-                "Elaborazione in corso. Interrompere?",
+                self, "Conferma", "Interrompere elaborazione?",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.No:
@@ -975,7 +838,6 @@ def main():
     app.setApplicationName("Background Remover Pro")
     app.setStyle('Fusion')
     
-    # Font
     font = QFont("Segoe UI", 10)
     app.setFont(font)
     
@@ -987,5 +849,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

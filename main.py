@@ -600,126 +600,139 @@ class MainWindow(QMainWindow):
         self.log(f"🔄 Output auto: {output_dir}")
     
     # =================================================================
-    # ELABORAZIONE - FIX: NON CAMBIARE MAI IL PERCORSO SCELTO
+    # ELABORAZIONE - FIX DEFINITIVO PER PATH CON PUNTI E SPAZI
     # =================================================================
     def start_processing(self):
-        """Avvia elaborazione - RISPETTA SEMPRE IL PERCORSO SCELTO"""
-        if not self.files_list:
-            self.show_warning("Nessun file", "Carica almeno un'immagine!")
-            return
-        
-        # =================================================================
-        # FIX CRITICO: Prendi il percorso ESATTO scelto dall'utente
-        # =================================================================
-        output = self.out_edit.text().strip()
-        
-        # Se vuoto, genera automatico
-        if not output:
-            self.auto_output()
-            output = self.out_edit.text()
-        
-    # =================================================================
-    # ELABORAZIONE - FIX RICONOSCIMENTO CARTELLA ESISTENTE
-    # =================================================================
-    def start_processing(self):
-        """Avvia elaborazione - RICONOSCE CARTELLE ESISTENTI CON SPAZI/PUNTI"""
+        """Avvia elaborazione - FIX PERCORSI WINDOWS PROBLEMATICI"""
         if not self.files_list:
             self.show_warning("Nessun file", "Carica almeno un'immagine!")
             return
         
         # Prendi percorso scelto
-        output = self.out_edit.text().strip()
-        if not output:
+        output_raw = self.out_edit.text().strip()
+        if not output_raw:
             self.auto_output()
-            output = self.out_edit.text()
+            output_raw = self.out_edit.text()
         
         # =================================================================
-        # FIX: Riconoscimento cartella esistente con path Windows nativo
+        # FIX CRITICO: Gestione path Windows con caratteri speciali
         # =================================================================
         try:
-            # 1. Pulisci input
-            output = output.strip('"').strip("'").strip()
+            # 1. Pulisci virgolette
+            output_clean = output_raw.strip('"').strip("'").strip()
             
-            # 2. Usa pathlib.Path per gestione robusta path Windows
-            from pathlib import Path
-            output_path = Path(output)
+            # 2. Aggiungi prefisso Windows per path lunghi (bypassa limiti)
+            # Questo risolve problemi con spazi, punti e path lunghi
+            if sys.platform == 'win32' and not output_clean.startswith('\\\\?\\'):
+                # Converti in absolute path prima
+                output_abs = os.path.abspath(output_clean)
+                # Aggiungi prefisso extended-length
+                output_extended = '\\\\?\\' + output_abs
+            else:
+                output_extended = os.path.abspath(output_clean)
             
-            # 3. Converti in path assoluto
-            output_path = output_path.resolve()
+            logger.info(f"Path raw: {output_clean}")
+            logger.info(f"Path extended: {output_extended}")
             
-            # 4. Verifica esistenza con metodo Windows nativo
-            # Usa os.scandir che è più affidabile di os.path.exists per path complessi
-            try:
-                # Tenta di listare la cartella - se funziona, esiste ed è accessibile
-                next(os.scandir(str(output_path)), None)
-                exists = True
-            except (FileNotFoundError, NotADirectoryError, PermissionError):
-                exists = False
+            # 3. Verifica esistenza con prefisso extended
+            import ctypes
+            from ctypes import wintypes
             
-            # 5. Se non esiste, creala
+            # Funzione Windows nativa per verificare cartella
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetFileAttributesW.restype = wintypes.DWORD
+            kernel32.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
+            
+            attr = kernel32.GetFileAttributesW(output_extended)
+            exists = (attr != 0xFFFFFFFF and attr & 0x10)  # FILE_ATTRIBUTE_DIRECTORY
+            
             if not exists:
-                logger.info(f"Cartella non trovata, tentativo creazione: {output_path}")
+                # Prova senza prefisso
+                attr = kernel32.GetFileAttributesW(output_clean)
+                exists = (attr != 0xFFFFFFFF and attr & 0x10)
+                if exists:
+                    output_extended = output_clean  # Usa path normale se funziona
+            
+            # 4. Se non esiste, creala con prefisso extended
+            if not exists:
+                logger.info("Cartella non esiste, creazione...")
                 try:
-                    output_path.mkdir(parents=True, exist_ok=True)
-                except Exception as e:
-                    logger.error(f"mkdir fallito: {e}")
-                    # Fallback: prova con os.makedirs
-                    os.makedirs(str(output_path), exist_ok=True)
+                    # Crea con prefisso extended
+                    os.makedirs(output_extended, exist_ok=True)
+                except:
+                    # Fallback senza prefisso
+                    os.makedirs(output_clean, exist_ok=True)
+                    output_extended = output_clean
                 
                 # Verifica creazione
-                try:
-                    next(os.scandir(str(output_path)), None)
-                except Exception as e:
-                    raise RuntimeError(f"Impossibile creare o accedere a: {output_path}")
+                attr = kernel32.GetFileAttributesW(output_extended)
+                if attr == 0xFFFFFFFF:
+                    raise RuntimeError(f"Cartella non creata: {output_extended}")
             
-            # 6. Converti a stringa per uso nel programma
-            output = str(output_path)
+            # 5. Determina quale path usare per le operazioni
+            # Test scrittura con prefisso extended
+            test_file_extended = output_extended + '\\test_write.tmp'
+            test_ok = False
             
-            # 7. Verifica sia directory (non file)
-            if os.path.isfile(output):
-                raise RuntimeError(f"Il percorso è un file, non una cartella: {output}")
-            
-            # 8. Test scrittura
-            test_file = os.path.join(output, "test_write.tmp")
             try:
-                with open(test_file, 'w') as f:
+                # Prova con prefisso extended
+                with open(test_file_extended, 'w') as f:
                     f.write("test")
-                os.remove(test_file)
-                logger.success(f"Cartella verificata e scrivibile: {output}")
-            except Exception as e:
-                raise PermissionError(f"Cartella trovata ma non scrivibile: {output} - {e}")
+                os.remove(test_file_extended)
+                test_ok = True
+                output_final = output_extended
+                logger.success(f"OK con prefisso extended: {output_extended}")
+            except Exception as e1:
+                logger.warning(f"Extended fallito: {e1}")
+                
+                # Prova senza prefisso
+                try:
+                    test_file_normal = os.path.join(output_clean, "test_write.tmp")
+                    with open(test_file_normal, 'w') as f:
+                        f.write("test")
+                    os.remove(test_file_normal)
+                    test_ok = True
+                    output_final = output_clean
+                    logger.success(f"OK con path normale: {output_clean}")
+                except Exception as e2:
+                    logger.error(f"Entrambi i metodi falliti: {e2}")
+                    raise
+            
+            if not test_ok:
+                raise PermissionError("Non scrivibile")
+            
+            # 6. Rimuovi prefisso extended per la UI (è brutto da vedere)
+            if output_final.startswith('\\\\?\\'):
+                output_display = output_final[4:]
+            else:
+                output_display = output_final
+            
+            # 7. Salva per usare nel worker
+            output = output_final  # Per operazioni file (può avere prefisso)
+            output_ui = output_display  # Per UI e log
             
         except Exception as e:
-            logger.error("Errore verifica cartella", e)
+            logger.error("Errore preparazione output", e)
             
-            # Se l'utente ha scelto un percorso specifico che non funziona, mostra errore
-            if self.out_edit.text().strip():
+            # Fallback su Desktop
+            try:
+                desktop = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
+                os.makedirs(desktop, exist_ok=True)
+                output = desktop
+                output_ui = desktop
+                self.out_edit.setText(output)
+                logger.warning(f"Fallback Desktop: {output}")
+            except Exception as fallback_e:
                 self.show_error(
-                    "Errore cartella output",
-                    f"Impossibile accedere alla cartella:\n\n"
-                    f"{output}\n\n"
-                    f"Errore: {str(e)}\n\n"
-                    f"Prova queste soluzioni:\n"
-                    f"1. Usa 'Sfoglia' per riselezionare la stessa cartella\n"
-                    f"2. Scegli una cartella sul Desktop (sempre funziona)\n"
-                    f"3. Rimuovi spazi dal nome: 'Esito_test' invece di 'Esito test'\n"
-                    f"4. Rimuovi punti: 'Esito_test' invece di 'Esito.test'"
+                    "Errore critico",
+                    f"Impossibile preparare output.\n"
+                    f"Errore originale: {str(e)}\n"
+                    f"Fallback errore: {str(fallback_e)}"
                 )
                 return
-            else:
-                # Fallback su Desktop solo se non ha scelto nulla
-                try:
-                    desktop = Path.home() / "Desktop" / "BG_Remover_Output"
-                    desktop.mkdir(parents=True, exist_ok=True)
-                    output = str(desktop)
-                    self.out_edit.setText(output)
-                    logger.warning(f"Fallback Desktop: {output}")
-                except Exception as fallback_e:
-                    self.show_error("Errore", f"Fallback fallito: {fallback_e}")
-                    return
         
-        # Salva percorso finale
-        self.out_edit.setText(output)
+        # Aggiorna UI con path pulito
+        self.out_edit.setText(output_ui)
         
         # UI elaborazione
         self.start_btn.setEnabled(False)
@@ -731,7 +744,9 @@ class MainWindow(QMainWindow):
         self.log("=" * 50)
         self.log("🚀 AVVIO ELABORAZIONE")
         self.log(f"📊 File: {len(self.files_list)}")
-        self.log(f"💾 Output: {output}")
+        self.log(f"💾 Output: {output_ui}")
+        if output != output_ui:
+            self.log(f"   (Path interno: {output[:30]}...)")
         self.log("=" * 50)
         
         # Ferma worker precedente
@@ -739,10 +754,10 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.worker.wait(1000)
         
-        # Crea worker
+        # Crea worker con path corretto
         self.worker = WorkerThread(
             self.files_list.copy(),
-            output,
+            output,  # Path con eventuale prefisso extended
             self.qual_spin.value()
         )
         
@@ -868,4 +883,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

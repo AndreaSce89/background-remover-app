@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Background Remover Pro v3.3 - FIX SALVATAGGIO CARTELLA SCELTA
-Bug fix: non cambiare più il percorso scelto dall'utente
+Background Remover Pro v3.4 - FIX TEMP + SPOSTAMENTO
+Elabora in cartella temporanea, poi sposta nella destinazione scelta
 """
 
 import sys
 import os
+import tempfile
+import shutil
 from pathlib import Path
 
 # Fix path PyInstaller
@@ -110,7 +112,7 @@ class WorkerThread(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Background Remover Pro v3.3")
+        self.setWindowTitle("Background Remover Pro v3.4")
         self.setMinimumSize(1100, 850)
         
         self.files_list = []
@@ -119,7 +121,7 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         
         logger.info("=" * 70)
-        logger.info("APPLICAZIONE AVVIATA v3.3")
+        logger.info("APPLICAZIONE AVVIATA v3.4")
         logger.info("=" * 70)
         
     def setup_ui(self):
@@ -510,7 +512,6 @@ class MainWindow(QMainWindow):
         self.in_edit.clear()
         self.out_edit.clear()
         
-        # AZZERAMENTO PROGRESSO
         self.progress.setValue(0)
         self.progress.setMaximum(100)
         self.progress.setFormat("Pronto")
@@ -600,141 +601,31 @@ class MainWindow(QMainWindow):
         self.log(f"🔄 Output auto: {output_dir}")
     
     # =================================================================
-    # ELABORAZIONE - FIX DEFINITIVO PER PATH CON PUNTI E SPAZI
+    # ELABORAZIONE - FIX DEFINITIVO: TEMP + SPOSTAMENTO
     # =================================================================
     def start_processing(self):
-        """Avvia elaborazione - FIX PERCORSI WINDOWS PROBLEMATICI"""
+        """Elabora in cartella temporanea, poi sposta nella destinazione scelta"""
         if not self.files_list:
             self.show_warning("Nessun file", "Carica almeno un'immagine!")
             return
         
-        # Prendi percorso scelto
-        output_raw = self.out_edit.text().strip()
-        if not output_raw:
+        output_user = self.out_edit.text().strip()
+        if not output_user:
             self.auto_output()
-            output_raw = self.out_edit.text()
+            output_user = self.out_edit.text()
         
         # =================================================================
-        # FIX CRITICO: Gestione path Windows con caratteri speciali
+        # STRATEGIA: Elabora in temp, poi sposta nel percorso scelto
         # =================================================================
-        try:
-            # 1. Pulisci virgolette
-            output_clean = output_raw.strip('"').strip("'").strip()
-            
-            # 2. Aggiungi prefisso Windows per path lunghi (bypassa limiti)
-            # Questo risolve problemi con spazi, punti e path lunghi
-            if sys.platform == 'win32' and not output_clean.startswith('\\\\?\\'):
-                # Converti in absolute path prima
-                output_abs = os.path.abspath(output_clean)
-                # Aggiungi prefisso extended-length
-                output_extended = '\\\\?\\' + output_abs
-            else:
-                output_extended = os.path.abspath(output_clean)
-            
-            logger.info(f"Path raw: {output_clean}")
-            logger.info(f"Path extended: {output_extended}")
-            
-            # 3. Verifica esistenza con prefisso extended
-            import ctypes
-            from ctypes import wintypes
-            
-            # Funzione Windows nativa per verificare cartella
-            kernel32 = ctypes.windll.kernel32
-            kernel32.GetFileAttributesW.restype = wintypes.DWORD
-            kernel32.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
-            
-            attr = kernel32.GetFileAttributesW(output_extended)
-            exists = (attr != 0xFFFFFFFF and attr & 0x10)  # FILE_ATTRIBUTE_DIRECTORY
-            
-            if not exists:
-                # Prova senza prefisso
-                attr = kernel32.GetFileAttributesW(output_clean)
-                exists = (attr != 0xFFFFFFFF and attr & 0x10)
-                if exists:
-                    output_extended = output_clean  # Usa path normale se funziona
-            
-            # 4. Se non esiste, creala con prefisso extended
-            if not exists:
-                logger.info("Cartella non esiste, creazione...")
-                try:
-                    # Crea con prefisso extended
-                    os.makedirs(output_extended, exist_ok=True)
-                except:
-                    # Fallback senza prefisso
-                    os.makedirs(output_clean, exist_ok=True)
-                    output_extended = output_clean
-                
-                # Verifica creazione
-                attr = kernel32.GetFileAttributesW(output_extended)
-                if attr == 0xFFFFFFFF:
-                    raise RuntimeError(f"Cartella non creata: {output_extended}")
-            
-            # 5. Determina quale path usare per le operazioni
-            # Test scrittura con prefisso extended
-            test_file_extended = output_extended + '\\test_write.tmp'
-            test_ok = False
-            
-            try:
-                # Prova con prefisso extended
-                with open(test_file_extended, 'w') as f:
-                    f.write("test")
-                os.remove(test_file_extended)
-                test_ok = True
-                output_final = output_extended
-                logger.success(f"OK con prefisso extended: {output_extended}")
-            except Exception as e1:
-                logger.warning(f"Extended fallito: {e1}")
-                
-                # Prova senza prefisso
-                try:
-                    test_file_normal = os.path.join(output_clean, "test_write.tmp")
-                    with open(test_file_normal, 'w') as f:
-                        f.write("test")
-                    os.remove(test_file_normal)
-                    test_ok = True
-                    output_final = output_clean
-                    logger.success(f"OK con path normale: {output_clean}")
-                except Exception as e2:
-                    logger.error(f"Entrambi i metodi falliti: {e2}")
-                    raise
-            
-            if not test_ok:
-                raise PermissionError("Non scrivibile")
-            
-            # 6. Rimuovi prefisso extended per la UI (è brutto da vedere)
-            if output_final.startswith('\\\\?\\'):
-                output_display = output_final[4:]
-            else:
-                output_display = output_final
-            
-            # 7. Salva per usare nel worker
-            output = output_final  # Per operazioni file (può avere prefisso)
-            output_ui = output_display  # Per UI e log
-            
-        except Exception as e:
-            logger.error("Errore preparazione output", e)
-            
-            # Fallback su Desktop
-            try:
-                desktop = os.path.join(os.path.expanduser("~"), "Desktop", "BG_Remover_Output")
-                os.makedirs(desktop, exist_ok=True)
-                output = desktop
-                output_ui = desktop
-                self.out_edit.setText(output)
-                logger.warning(f"Fallback Desktop: {output}")
-            except Exception as fallback_e:
-                self.show_error(
-                    "Errore critico",
-                    f"Impossibile preparare output.\n"
-                    f"Errore originale: {str(e)}\n"
-                    f"Fallback errore: {str(fallback_e)}"
-                )
-                return
         
-        # Aggiorna UI con path pulito
-        self.out_edit.setText(output_ui)
+        # Cartella temporanea sicura (sempre funziona)
+        temp_dir = tempfile.mkdtemp(prefix="bg_remover_")
+        logger.info(f"Temp dir: {temp_dir}")
         
-        # UI elaborazione
+        # Salva percorso finale desiderato
+        final_output = os.path.normpath(output_user.strip('"').strip("'"))
+        
+        # UI
         self.start_btn.setEnabled(False)
         self.start_btn.setText("⏳ ELABORAZIONE...")
         self.progress.setMaximum(len(self.files_list))
@@ -744,9 +635,8 @@ class MainWindow(QMainWindow):
         self.log("=" * 50)
         self.log("🚀 AVVIO ELABORAZIONE")
         self.log(f"📊 File: {len(self.files_list)}")
-        self.log(f"💾 Output: {output_ui}")
-        if output != output_ui:
-            self.log(f"   (Path interno: {output[:30]}...)")
+        self.log(f"💾 Output finale: {final_output}")
+        self.log(f"   (Elaborazione in: {temp_dir})")
         self.log("=" * 50)
         
         # Ferma worker precedente
@@ -754,16 +644,67 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.worker.wait(1000)
         
-        # Crea worker con path corretto
+        # Crea worker che elabora in temp
         self.worker = WorkerThread(
             self.files_list.copy(),
-            output,  # Path con eventuale prefisso extended
+            temp_dir,  # Elabora qui
             self.qual_spin.value()
         )
         
+        # Connetti segnali
         self.worker.log_signal.connect(self.on_log)
         self.worker.progress_signal.connect(self.on_progress)
-        self.worker.finished_signal.connect(self.on_finished)
+        
+        # Gestione fine elaborazione con spostamento
+        def on_finished_move(stats):
+            self.start_btn.setEnabled(True)
+            self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
+            
+            if stats.get('error'):
+                self.show_error("Errore", stats.get('message', 'Errore'))
+                # Pulisci temp
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
+                return
+            
+            # Sposta file da temp a destinazione finale
+            self.log("📁 Spostamento file nella cartella scelta...")
+            try:
+                # Crea cartella finale se non esiste
+                os.makedirs(final_output, exist_ok=True)
+                
+                # Sposta tutti i file elaborati
+                moved = 0
+                for f in os.listdir(temp_dir):
+                    if f.endswith('_nobg.png'):
+                        src = os.path.join(temp_dir, f)
+                        dst = os.path.join(final_output, f)
+                        shutil.move(src, dst)
+                        moved += 1
+                
+                # Pulisci temp
+                shutil.rmtree(temp_dir)
+                
+                self.log(f"✅ Spostati {moved} file in: {final_output}")
+                self.show_success(
+                    "Completato!",
+                    f"Elaborate {stats.get('success', 0)} immagini\n"
+                    f"Salvate in: {final_output}"
+                )
+                self.out_edit.setText(final_output)
+                
+            except Exception as move_e:
+                logger.error("Errore spostamento", move_e)
+                self.show_error(
+                    "Errore spostamento",
+                    f"Elaborazione OK ma impossibile spostare in:\n{final_output}\n\n"
+                    f"File temporanei in: {temp_dir}\n"
+                    f"Errore: {str(move_e)}"
+                )
+        
+        self.worker.finished_signal.connect(on_finished_move)
         self.worker.error_signal.connect(self.on_error)
         
         self.worker.start()
@@ -786,35 +727,6 @@ class MainWindow(QMainWindow):
         self.progress.setFormat(f"%p% - {current}/{total}")
         self.status_label.setText(f"Elaborazione: {current}/{total}")
     
-    def on_finished(self, stats):
-        self.start_btn.setEnabled(True)
-        self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
-        
-        if stats.get('error'):
-            self.show_error("Errore", stats.get('message', 'Errore sconosciuto'))
-            return
-        
-        if stats.get('interrupted'):
-            self.show_warning("Interrotto", "Elaborazione fermata")
-            return
-        
-        success = stats.get('success', 0)
-        total = stats.get('total', 0)
-        failed = stats.get('failed', 0)
-        
-        self.progress.setValue(total)
-        
-        if failed == 0:
-            self.show_success(
-                "Completato! 🎉",
-                f"Successo: {success}/{total}\nOutput: {self.out_edit.text()}"
-            )
-        else:
-            self.show_warning(
-                f"Completato con {failed} errori",
-                f"Successo: {success}/{total}\nVedi log per dettagli"
-            )
-    
     def on_error(self, title, message):
         self.start_btn.setEnabled(True)
         self.start_btn.setText("▶️ AVVIA ELABORAZIONE")
@@ -834,9 +746,9 @@ class MainWindow(QMainWindow):
             "📖 GUIDA\n\n"
             "1. 📁 Cartella: carica TUTTE le immagini\n"
             "2. 📄 File: seleziona singole immagini\n"
-            "3. 💾 Sfoglia: scegli DOVE salvare (viene RISPETTATO)\n"
-            "4. 🔄 Auto: genera output automatico\n\n"
-            "Il percorso scelto in 'Sfoglia' viene SEMPRE rispettato!"
+            "3. 💾 Sfoglia: scegli DOVE salvare\n"
+            "4. Elaborazione avviene in temp, poi sposta\n\n"
+            "Il percorso scelto viene SEMPRE rispettato!"
         )
     
     def show_error(self, title, msg):
@@ -883,5 +795,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

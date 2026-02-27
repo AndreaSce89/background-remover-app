@@ -672,36 +672,103 @@ class MainWindow(QMainWindow):
             # Sposta file da temp a destinazione finale
             self.log("📁 Spostamento file nella cartella scelta...")
             try:
-                # Crea cartella finale se non esiste
-                os.makedirs(final_output, exist_ok=True)
+                # =================================================================
+                # FIX: Crea cartella finale con metodo robusto
+                # =================================================================
+                # Normalizza path finale
+                final_clean = final_output.strip('"').strip("'")
                 
-                # Sposta tutti i file elaborati
+                # Su Windows, prova con prefisso extended-length
+                if sys.platform == 'win32':
+                    # Crea cartella con prefisso \\?\ se necessario
+                    extended_path = '\\\\?\\' + os.path.abspath(final_clean)
+                    try:
+                        os.makedirs(extended_path, exist_ok=True)
+                    except:
+                        os.makedirs(final_clean, exist_ok=True)
+                else:
+                    os.makedirs(final_clean, exist_ok=True)
+                
+                logger.info(f"Cartella finale: {final_clean}")
+                
+                # =================================================================
+                # FIX: Copia file per file con gestione errori
+                # =================================================================
                 moved = 0
+                errors = []
+                
                 for f in os.listdir(temp_dir):
                     if f.endswith('_nobg.png'):
                         src = os.path.join(temp_dir, f)
-                        dst = os.path.join(final_output, f)
-                        shutil.move(src, dst)
-                        moved += 1
+                        
+                        # Nome file pulito (senza caratteri problematici)
+                        dst_name = f.replace(' ', '_').replace('..', '.')
+                        dst = os.path.join(final_clean, dst_name)
+                        
+                        try:
+                            # Metodo 1: copy2 + remove (più affidabile di move)
+                            shutil.copy2(src, dst)
+                            os.remove(src)
+                            moved += 1
+                            logger.success(f"Copiato: {dst_name}")
+                        except Exception as copy_e:
+                            # Metodo 2: copy con path extended
+                            try:
+                                src_ext = '\\\\?\\' + os.path.abspath(src)
+                                dst_ext = '\\\\?\\' + os.path.abspath(dst)
+                                shutil.copy2(src_ext, dst_ext)
+                                os.remove(src_ext)
+                                moved += 1
+                                logger.success(f"Copiato (extended): {dst_name}")
+                            except Exception as ext_e:
+                                errors.append(f"{f}: {str(copy_e)[:50]}")
+                                logger.error(f"Fallito {f}", ext_e)
                 
                 # Pulisci temp
-                shutil.rmtree(temp_dir)
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as rm_e:
+                    logger.warning(f"Cleanup temp fallito: {rm_e}")
                 
-                self.log(f"✅ Spostati {moved} file in: {final_output}")
-                self.show_success(
-                    "Completato!",
-                    f"Elaborate {stats.get('success', 0)} immagini\n"
-                    f"Salvate in: {final_output}"
-                )
-                self.out_edit.setText(final_output)
+                # =================================================================
+                # RISULTATO
+                # =================================================================
+                if errors and moved == 0:
+                    # Tutti falliti
+                    self.show_error(
+                        "Errore spostamento",
+                        f"Nessun file spostato.\n"
+                        f"Errori: {', '.join(errors[:3])}\n"
+                        f"Temp: {temp_dir}"
+                    )
+                elif errors:
+                    # Parziale
+                    self.show_warning(
+                        "Completato parzialmente",
+                        f"Spostati {moved} file, {len(errors)} falliti.\n"
+                        f"Cartella: {final_clean}\n"
+                        f"Errori: {', '.join(errors[:2])}"
+                    )
+                    self.out_edit.setText(final_clean)
+                else:
+                    # Tutto OK
+                    self.log(f"✅ Spostati {moved} file in: {final_clean}")
+                    self.show_success(
+                        "Completato! 🎉",
+                        f"Elaborate {stats.get('success', 0)} immagini\n"
+                        f"Salvate in: {final_clean}"
+                    )
+                    self.out_edit.setText(final_clean)
                 
             except Exception as move_e:
-                logger.error("Errore spostamento", move_e)
+                logger.error("Errore spostamento generale", move_e)
                 self.show_error(
                     "Errore spostamento",
-                    f"Elaborazione OK ma impossibile spostare in:\n{final_output}\n\n"
-                    f"File temporanei in: {temp_dir}\n"
-                    f"Errore: {str(move_e)}"
+                    f"Elaborazione OK ma impossibile spostare.\n\n"
+                    f"Destinazione: {final_output}\n"
+                    f"Temp: {temp_dir}\n"
+                    f"Errore: {str(move_e)}\n\n"
+                    f"Puoi recuperare i file manualmente dalla cartella temp!"
                 )
         
         self.worker.finished_signal.connect(on_finished_move)
@@ -795,3 +862,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
